@@ -51,7 +51,7 @@ chip = {
     'part' : "STM32F405RGT6",
     'family' : "STM32F4",
     'package' : "LQFP64",
-    'ram' : 192,
+    'ram' : 128,
     'flash' : 1024,
     'speed' : 168,
     'usart' : 6,
