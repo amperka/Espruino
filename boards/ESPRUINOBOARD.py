@@ -16,26 +16,27 @@
 import pinutils;
 info = {
  'name' : "Original Espruino Board rev 1.3/1.4",
- 'link' : [ "http://www.espruino.com/EspruinoBoard" ],
+ 'link' : [ "http://www.espruino.com/Original" ],
  'espruino_page_link' : "EspruinoBoard",
  'default_console' : "EV_SERIAL1",
  'default_console_tx' : "A9",
  'default_console_rx' : "A10",
- 'variables' : 2240,
+ 'variables' : 2756,
  'bootloader' : 1,
  'serial_bootloader' : True,
  'binary_name' : 'espruino_%v_espruino_1r3.bin',
  'binaries' : [
-  { 'filename' : 'espruino_%v_espruino_1r3_wiznet.bin', 'description' : "WIZNet W5500 Ethernet Networking"},
-  { 'filename' : 'espruino_%v_espruino_1r3.bin', 'description' : "TI CC3000 WiFi Networking"},
+  { 'filename' : 'espruino_%v_espruino_1r3.bin', 'description' : "No networking, includes all other features"},
+  { 'filename' : 'espruino_%v_espruino_1r3_at.bin', 'description' : "AT Command WiFi (No vector font, FFT)"},
+  { 'filename' : 'espruino_%v_espruino_1r3_wiznet.bin', 'description' : "WIZNet W5500 Ethernet Networking (No crypto lib, AT Command WiFi, vector font, FFT, debugger or tab complete)"}
  ],
  'build' : {
    'optimizeflags' : '-Os',
    'libraries' : [
-     'NET',
+     #'NET', # enabled by create_zip on demand
      'GRAPHICS',
      'NEOPIXEL',
-     'HASHLIB',
+     'CRYPTO','SHA1_JS',
 #     'TV', # TV had to be removed because of flash usage
      'FILESYSTEM'
    ],

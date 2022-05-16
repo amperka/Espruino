@@ -25,10 +25,10 @@ info = {
      'NET',
      'GRAPHICS',
      'FILESYSTEM',
-     'CRYPTO',
+     'CRYPTO','SHA256','SHA512',
      'TLS',
-     'HASHLIB',
      'TELNET',
+     'TENSORFLOW',
    ],
    'makefile' : [
      'LINUX=1',
@@ -51,7 +51,8 @@ chip = {
 };
 
 devices = {
-  'LED1' : { 'pin' : 'D16' }
+  'LED1' : { 'pin' : 'D16' },
+  'USB' : {} # to convince code that we have a USB port (it's used for the console in Linux)
 };
 
 def get_pins():

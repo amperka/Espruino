@@ -23,28 +23,32 @@ ZIPFILE=$DIR/archives/espruino_${VERSION}.zip
 rm -rf $ZIPDIR
 mkdir $ZIPDIR
 
-
-# Setup ESP8266
-#export ESP8266_SDK_ROOT=$DIR/esp_iot_sdk_v2.0.0.p1
-#export PATH=$PATH:$DIR/xtensa-lx106-elf/bin/
-rm -rf esp_iot_sdk_v2.0.0*
-rm -rf xtensa-lx106-elf
-source scripts/provision.sh ESP8266_BOARD
+# Tidy up
+# Binaries
+rm -f bootloader_espruino_$VERSION* espruino_$VERSION*
+# ESP8266
+#rm -rf esp_iot_sdk_v2.0.0*
+#rm -rf xtensa-lx106-elf
 # ESP32
-#export ESP_IDF_PATH=$DIR/esp-idf
-#export ESP_APP_TEMPLATE_PATH=$DIR/app
-#export PATH=$PATH:$DIR/xtensa-esp32-elf/bin/
-rm -rf esp-idf
-rm -rf app
-rm -rf xtensa-esp32-elf
-source scripts/provision.sh ESP32
+#rm -rf esp-idf
+#rm -rf app
+#rm -rf xtensa-esp32-elf
+# Install everything
+source scripts/provision.sh ALL
 
 
 
 echo ------------------------------------------------------
 echo                          Building Version $VERSION
 echo ------------------------------------------------------
+<<<<<<< HEAD
 for BOARDNAME in PICO_1V3_CC3000 PICO_1V3_WIZ ESPRUINO_1V3 ESPRUINO_1V3_WIZ ESPRUINOWIFI PUCKJS PIXLJS NUCLEOF401RE NUCLEOF411RE STM32VLDISCOVERY STM32F3DISCOVERY STM32F4DISCOVERY STM32L496GDISCOVERY OLIMEXINO_STM32 HYSTM32_24 HYSTM32_28 HYSTM32_32 RASPBERRYPI MICROBIT ESP8266_BOARD ESP8266_4MB RUUVITAG ESP32 WIO_LTE
+=======
+# The following have been removed because it's too hard to keep the build going:
+# STM32F3DISCOVERY OLIMEXINO_STM32 HYSTM32_32 HYSTM32_28 HYSTM32_24 RAK8211 RAK8212 RUUVITAG THINGY52 RASPBERRYPI
+# 
+for BOARDNAME in ESPRUINO_1V3 ESPRUINO_1V3_AT ESPRUINO_1V3_WIZ PICO_1V3 PICO_1V3_CC3000 PICO_1V3_WIZ ESPRUINOWIFI PUCKJS PIXLJS BANGLEJS BANGLEJS2 MDBT42Q NUCLEOF401RE NUCLEOF411RE STM32VLDISCOVERY STM32F4DISCOVERY STM32L496GDISCOVERY MICROBIT1 MICROBIT2 ESP8266_BOARD ESP8266_4MB ESP32 WIO_LTE RAK5010 SMARTIBOT 
+>>>>>>> master
 do
   echo ------------------------------
   echo                  $BOARDNAME
@@ -53,22 +57,32 @@ do
   EXTRANAME=
   if [ "$BOARDNAME" == "ESPRUINO_1V3" ]; then
     BOARDNAME=ESPRUINOBOARD
-    EXTRADEFS=CC3000=1
+    EXTRADEFS=
+  fi
+  if [ "$BOARDNAME" == "ESPRUINO_1V3_AT" ]; then
+    BOARDNAME=ESPRUINOBOARD
+    EXTRADEFS="USE_NET=1 DEFINES=-DNO_VECTOR_FONT=1 BLACKLIST=boards/ESPRUINOBOARD.net.blocklist"
+    EXTRANAME=_at
   fi
   if [ "$BOARDNAME" == "ESPRUINO_1V3_WIZ" ]; then
     BOARDNAME=ESPRUINOBOARD
-    EXTRADEFS=WIZNET=1
+    EXTRADEFS="USE_NET=1 WIZNET=1 USE_CRYPTO=0 USE_DEBUGGER=0 USE_TAB_COMPLETE=0 USE_NETWORK_JS=0 DEFINES='-DNO_VECTOR_FONT=1 -DNO_DUMP_HARDWARE_INITIALISATION=1' BLACKLIST=boards/ESPRUINOBOARD.net.blocklist"
+    # we must now disable crypto in order to get WIZnet support in on the Original board
     EXTRANAME=_wiznet
   fi
   if [ "$BOARDNAME" == "PICO_1V3_CC3000" ]; then
     BOARDNAME=PICO_R1_3
-    EXTRADEFS=CC3000=1
+    EXTRADEFS="CC3000=1 USE_DEBUGGER=0 USE_NETWORK_JS=0 USE_TV=0 DEFINES='-DNO_VECTOR_FONT=1 -DNO_DUMP_HARDWARE_INITIALISATION=1'"
     EXTRANAME=_cc3000
   fi
   if [ "$BOARDNAME" == "PICO_1V3_WIZ" ]; then
     BOARDNAME=PICO_R1_3
-    EXTRADEFS=WIZNET=1
+    EXTRADEFS="WIZNET=1 USE_DEBUGGER=0 USE_NETWORK_JS=0 USE_TV=0 DEFINES='-DNO_VECTOR_FONT=1 -DNO_DUMP_HARDWARE_INITIALISATION=1'"
     EXTRANAME=_wiznet
+  fi
+  if [ "$BOARDNAME" == "PICO_1V3" ]; then
+    BOARDNAME=PICO_R1_3
+    EXTRADEFS=
   fi
 
   # actually build
@@ -81,23 +95,43 @@ do
     ESP_BINARY_NAME=`basename $ESP_BINARY_NAME .hex`.zip
     EXTRADEFS=DFU_UPDATE_BUILD=1
   fi
-  if [ "$BOARDNAME" == "RUUVITAG" ]; then
+  if [ "$BOARDNAME" == "BANGLEJS" ]; then
     ESP_BINARY_NAME=`basename $ESP_BINARY_NAME .hex`.zip
     EXTRADEFS=DFU_UPDATE_BUILD=1
+  fi
+  if [ "$BOARDNAME" == "BANGLEJS2" ]; then
+    ESP_BINARY_NAME=`basename $ESP_BINARY_NAME .hex`.zip
+    EXTRADEFS=DFU_UPDATE_BUILD=1
+  fi
+  if [ "$BOARDNAME" == "SMARTIBOT" ]; then
+    ESP_BINARY_NAME=`basename $ESP_BINARY_NAME .hex`.zip
+    EXTRADEFS=DFU_UPDATE_BUILD=1
+  fi
+  if [ "$BOARDNAME" == "MDBT42Q" ]; then
+    ESP_BINARY_NAME=`basename $ESP_BINARY_NAME .hex`.zip
+    EXTRADEFS=DFU_UPDATE_BUILD=1
+  fi
+  if [ "$BOARDNAME" == "RUUVITAG" ]; then
+    ESP_BINARY2_NAME=`basename $ESP_BINARY_NAME .hex`.zip
+    EXTRADEFS=DFU_UPDATE_BUILD_WITH_HEX=1
+  fi
+  if [ "$BOARDNAME" == "THINGY52" ]; then
+    ESP_BINARY2_NAME=`basename $ESP_BINARY_NAME .hex`.zip
+    EXTRADEFS=DFU_UPDATE_BUILD_WITH_HEX=1
   fi
 
   echo "Building $ESP_BINARY_NAME"
   echo
   rm -f $BINARY_NAME
   if [ "$BOARDNAME" == "ESPRUINOBOARD" ]; then
-    bash -c "$EXTRADEFS scripts/create_espruino_image_1v3.sh" || { echo "Build of $BOARDNAME failed" ; exit 1; }
+    bash -c "$EXTRADEFS scripts/create_espruino_image_1v3.sh" || { echo "Build of '$EXTRADEFS BOARD=$BOARDNAME make' failed" ; exit 1; }
   elif [ "$BOARDNAME" == "PICO_R1_3" ]; then
-    bash -c "$EXTRADEFS scripts/create_pico_image_1v3.sh" || { echo "Build of $BOARDNAME failed" ; exit 1; }
+    bash -c "$EXTRADEFS scripts/create_pico_image_1v3.sh" || { echo "Build of '$EXTRADEFS BOARD=$BOARDNAME make' failed" ; exit 1; }
   elif [ "$BOARDNAME" == "ESPRUINOWIFI" ]; then
-    bash -c "$EXTRADEFS scripts/create_espruinowifi_image.sh" || { echo "Build of $BOARDNAME failed" ; exit 1; }
+    bash -c "$EXTRADEFS scripts/create_espruinowifi_image.sh" || { echo "Build of '$EXTRADEFS BOARD=$BOARDNAME make' failed" ; exit 1; }
   else
     bash -c "$EXTRADEFS RELEASE=1 BOARD=$BOARDNAME make clean"
-    bash -c "$EXTRADEFS RELEASE=1 BOARD=$BOARDNAME make" || { echo "Build of $BOARDNAME failed" ; exit 1; }
+    bash -c "$EXTRADEFS RELEASE=1 BOARD=$BOARDNAME make" || { echo "Build of '$EXTRADEFS BOARD=$BOARDNAME make' failed" ; exit 1; }
   fi
   # rename binary if needed
   if [ -n "$EXTRANAME" ]; then
@@ -107,19 +141,27 @@ do
   fi
   # copy...
   if [ "$BOARDNAME" == "ESP8266_BOARD" ]; then
-    tar -C $ZIPDIR -xzf ${ESP_BINARY_NAME}.tgz || { echo "Build of $BOARDNAME failed" ; exit 1; }
+    tar -C $ZIPDIR -xzf ${ESP_BINARY_NAME}.tgz || { echo "Build of 'BOARD=$BOARDNAME make' failed" ; exit 1; }
     # build a combined image
-    bash -c "$EXTRADEFS RELEASE=1 BOARD=$BOARDNAME make combined" || { echo "Build of $BOARDNAME failed" ; exit 1; }
-    cp ${ESP_BINARY_NAME}_combined_512.bin $ZIPDIR || { echo "Build of $BOARDNAME failed" ; exit 1; }
+    bash -c "$EXTRADEFS RELEASE=1 BOARD=$BOARDNAME make combined" || { echo "Build of 'BOARD=$BOARDNAME make' failed" ; exit 1; }
+    cp ${ESP_BINARY_NAME}_combined_512.bin $ZIPDIR || { echo "Build of 'BOARD=$BOARDNAME make' failed" ; exit 1; }
   elif [ "$BOARDNAME" == "ESP8266_4MB" ]; then
-    tar -C $ZIPDIR -xzf ${ESP_BINARY_NAME}.tgz || { echo "Build of $BOARDNAME failed" ; exit 1; }
+    tar -C $ZIPDIR -xzf ${ESP_BINARY_NAME}.tgz || { echo "Build of 'BOARD=$BOARDNAME make' failed" ; exit 1; }
+    # build a combined image
+    bash -c "$EXTRADEFS RELEASE=1 BOARD=$BOARDNAME make combined" || { echo "Build of 'BOARD=$BOARDNAME make' failed" ; exit 1; }
+    cp ${ESP_BINARY_NAME}_combined_4096.bin $ZIPDIR || { echo "Build of 'BOARD=$BOARDNAME make' failed" ; exit 1; }
   else
     echo Copying ${ESP_BINARY_NAME} to $ZIPDIR/$NEW_BINARY_NAME
-    cp ${ESP_BINARY_NAME} $ZIPDIR/$NEW_BINARY_NAME || { echo "Build of $BOARDNAME failed" ; exit 1; }
+    cp ${ESP_BINARY_NAME} $ZIPDIR/$NEW_BINARY_NAME || { echo "Build of 'BOARD=$BOARDNAME make' failed" ; exit 1; }
     if [ "$BOARDNAME" == "ESP32" ]; then
-      tar -C $ZIPDIR -xzf  `basename $ESP_BINARY_NAME .bin`.tgz || { echo "Build of $BOARDNAME failed" ; exit 1; }
+      tar -C $ZIPDIR -xzf  `basename $ESP_BINARY_NAME .bin`.tgz || { echo "Build of 'BOARD=$BOARDNAME make' failed" ; exit 1; }
     fi
   fi
+  # Copy second binary
+  if [ -n "$ESP_BINARY2_NAME" ]; then
+    cp ${ESP_BINARY2_NAME} $ZIPDIR || { echo "Build of 'BOARD=$BOARDNAME make' failed" ; exit 1; }
+  fi
+
 done
 
 

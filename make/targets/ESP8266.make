@@ -19,16 +19,24 @@ USER2_BIN    = espruino_esp8266_user2.bin
 USER1_ELF    = espruino_esp8266_user1.elf
 USER2_ELF    = espruino_esp8266_user2.elf
 PARTIAL      = espruino_esp8266_partial.o
+
 ifdef FLASH_4MB
-ESP_COMBINED_SIZE = 4096
 ESP_FLASH_ADDONS  = $(ET_DEFAULTS) $(INIT_DATA) $(ET_BLANK) $(BLANK)
 LD_SCRIPT1   = ./targets/esp8266/eagle.app.v6.new.2048.ld
 LD_SCRIPT2   = ./targets/esp8266/eagle.app.v6.new.2048.ld
 else
-ESP_COMBINED_SIZE = 512
 LD_SCRIPT1   = ./targets/esp8266/eagle.app.v6.new.1024.app1.ld
 LD_SCRIPT2   = ./targets/esp8266/eagle.app.v6.new.1024.app2.ld
 endif
+
+ifdef FLASH_1MB
+ifdef NO_FOTA
+LD_SCRIPT1   = ./targets/esp8266/eagle.app.v6.new.2048.ld
+LD_SCRIPT2   = ./targets/esp8266/eagle.app.v6.new.2048.ld
+endif
+endif
+
+LD_RENAME    = --rename-section .text=.irom.text --rename-section .literal=.irom.literal
 ESP_COMBINED = $(PROJ_NAME)_combined_$(ESP_COMBINED_SIZE).bin
 APPGEN_TOOL  = $(ESP8266_SDK_ROOT)/tools/gen_appbin.py
 BOOTLOADER   = $(ESP8266_SDK_ROOT)/bin/boot_v1.6.bin
@@ -44,17 +52,21 @@ $(PARTIAL): $(OBJS) $(LINKER_FILE)
 	@echo LD $@
 ifdef USE_CRYPTO
 	$(Q)$(OBJCOPY) --rename-section .rodata=.irom0.text libs/crypto/mbedtls/library/sha1.o
+ifdef USE_SHA256
 	$(Q)$(OBJCOPY) --rename-section .rodata=.irom0.text libs/crypto/mbedtls/library/sha256.o
+endif
+ifdef USE_SHA512
 	$(Q)$(OBJCOPY) --rename-section .rodata=.irom0.text libs/crypto/mbedtls/library/sha512.o
 endif
+endif
 	$(Q)$(LD) $(OPTIMIZEFLAGS) -nostdlib -Wl,--no-check-sections -Wl,-static -r -o $@ $(OBJS)
-	$(Q)$(OBJCOPY) --rename-section .text=.irom0.text --rename-section .literal=.irom0.literal $@
+	$(Q)$(OBJCOPY) $(LD_RENAME) $@
 
 # generate fully linked 'user1' .elf using linker script for first OTA partition
 $(USER1_ELF): $(PARTIAL) $(LINKER_FILE)
 	@echo LD $@
 	$(Q)$(LD) $(LDFLAGS) -T$(LD_SCRIPT1) -o $@ $(PARTIAL) -Wl,--start-group $(LIBS) -Wl,--end-group
-	$(Q)$(OBJDUMP) --headers -j .irom0.text -j .text $@ | tail -n +4
+	$(Q)$(OBJDUMP) --headers -j .data -j .rodata -j .bss -j .irom0.text -j .text $@ | tail -n +4
 	@echo To disassemble: $(OBJDUMP) -d -l -x $@
 	$(OBJDUMP) -d -l -x $@ >espruino_esp8266_user1.lst
 
@@ -71,7 +83,7 @@ $(USER1_BIN): $(USER1_ELF)
 	$(Q)$(OBJCOPY) --only-section .rodata -O binary $(USER1_ELF) eagle.app.v6.rodata.bin
 	$(Q)$(OBJCOPY) --only-section .irom0.text -O binary $(USER1_ELF) eagle.app.v6.irom0text.bin
 	@ls -ls eagle*bin
-	$(Q)COMPILE=gcc python $(APPGEN_TOOL) $(USER1_ELF) 2 $(ESP_FLASH_MODE) $(ESP_FLASH_FREQ_DIV) $(ESP_FLASH_SIZE) 0 >/dev/null
+	$(Q)COMPILE=gcc python2 $(APPGEN_TOOL) $(USER1_ELF) 2 $(ESP_FLASH_MODE) $(ESP_FLASH_FREQ_DIV) $(ESP_FLASH_SIZE) 0 >/dev/null
 	$(Q) rm -f eagle.app.v6.*.bin
 	$(Q) mv eagle.app.flash.bin $@
 	@echo "** user1.bin uses $$( stat $(STAT_FLAGS) $@) bytes of" $(ESP_FLASH_MAX) "available"
@@ -85,7 +97,7 @@ $(USER2_BIN): $(USER2_ELF) $(USER1_BIN)
 	$(Q)$(OBJCOPY) --only-section .data -O binary $(USER2_ELF) eagle.app.v6.data.bin
 	$(Q)$(OBJCOPY) --only-section .rodata -O binary $(USER2_ELF) eagle.app.v6.rodata.bin
 	$(Q)$(OBJCOPY) --only-section .irom0.text -O binary $(USER2_ELF) eagle.app.v6.irom0text.bin
-	$(Q)COMPILE=gcc python $(APPGEN_TOOL) $(USER2_ELF) 2 $(ESP_FLASH_MODE) $(ESP_FLASH_FREQ_DIV) $(ESP_FLASH_SIZE) 1 >/dev/null
+	$(Q)COMPILE=gcc python2 $(APPGEN_TOOL) $(USER2_ELF) 2 $(ESP_FLASH_MODE) $(ESP_FLASH_FREQ_DIV) $(ESP_FLASH_SIZE) 1 >/dev/null
 	$(Q) rm -f eagle.app.v6.*.bin
 	$(Q) mv eagle.app.flash.bin $@
 
@@ -93,7 +105,9 @@ $(ESP_ZIP): $(USER1_BIN) $(USER2_BIN)
 	$(Q)rm -rf build/$(basename $(ESP_ZIP))
 	$(Q)mkdir -p build/$(basename $(ESP_ZIP))
 	$(Q)cp $(USER1_BIN) $(USER2_BIN) scripts/wiflash.sh $(BLANK) \
-	  $(INIT_DATA) $(BOOTLOADER) targets/esp8266/README_flash.txt \
+	  $(INIT_DATA) $(BOOTLOADER) \
+	  targets/esp8266/README_flash.txt \
+	  targets/esp8266/Makefile \
 	  build/$(basename $(ESP_ZIP))
 	$(Q)tar -C build -zcf $(ESP_ZIP) ./$(basename $(ESP_ZIP))
 
@@ -142,14 +156,14 @@ flash: all $(USER1_BIN) $(USER2_BIN)
 ifndef COMPORT
 	$(error "In order to flash, we need to have the COMPORT variable defined")
 endif
-	-$(ESPTOOL) --port $(COMPORT) --baud $(FLASH_BAUD) write_flash --flash_freq $(ET_FF) --flash_mode qio --flash_size $(ET_FS) 0x0000 $(BOOTLOADER) 0x1000 $(USER1_BIN) $(ET_DEFAULTS) $(INIT_DATA) $(ET_BLANK) $(BLANK)
+	-$(ESPTOOL) --port $(COMPORT) --baud $(FLASH_BAUD) write_flash --flash_freq $(ET_FF) --flash_mode $(ET_FM) --flash_size $(ET_FS) 0x0000 $(BOOTLOADER) 0x1000 $(USER1_BIN) $(ET_DEFAULTS) $(INIT_DATA) $(ET_BLANK) $(BLANK)
 
 
 flash_combined: $(ESP_COMBINED)
 ifndef COMPORT
 	$(error "In order to flash, we need to have the COMPORT variable defined")
 endif
-	-$(ESPTOOL) --port $(COMPORT) --baud $(FLASH_BAUD) write_flash --flash_freq $(ET_FF) --flash_mode qio --flash_size $(ET_FS) 0x0000 $(ESP_COMBINED) 
+	-$(ESPTOOL) --port $(COMPORT) --baud $(FLASH_BAUD) write_flash --flash_freq $(ET_FF) --flash_mode $(ET_FM) --flash_size $(ET_FS) 0x0000 $(ESP_COMBINED) 
 
 # erase flash
 flash_erase: .

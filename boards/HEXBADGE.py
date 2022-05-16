@@ -39,7 +39,7 @@ info = {
      'DEFINES+=-DHAL_NFC_ENGINEERING_BC_FTPAN_WORKAROUND=1', # Looks like proper production nRF52s had this issue
      'DEFINES+=-DBLUETOOTH_NAME_PREFIX=\'"Badge"\'',
      'DFU_PRIVATE_KEY=targets/nrf5x_dfu/dfu_private_key.pem',
-     'DFU_SETTINGS=--application-version 0xff --hw-version 52 --sd-req 0x8C',
+     'DFU_SETTINGS=--application-version 0xff --hw-version 52 --sd-req 0x8C,0x91',
      'INCLUDE += -I$(ROOT)/libs/hexbadge',
      'WRAPPERSOURCES += libs/hexbadge/jswrap_hexbadge.c'
    ]
@@ -55,8 +55,8 @@ chip = {
   'flash' : 512,
   'speed' : 64,
   'usart' : 1,
-  'spi' : 3,
-  'i2c' : 2,
+  'spi' : 1,
+  'i2c' : 1,
   'adc' : 1,
   'dac' : 0,
   'saved_code' : {

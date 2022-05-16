@@ -32,6 +32,13 @@
 #include "jshardwarePWM.h"
 #include "jshardwarePulse.h"
 
+#ifdef BLUETOOTH
+#include "BLE/esp32_gap_func.h"
+#include "BLE/esp32_gattc_func.h"
+#include "BLE/esp32_gatts_func.h"
+#endif
+#include "jshardwareESP32.h"
+
 #include "jsutils.h"
 #include "jstimer.h"
 #include "jsparse.h"
@@ -76,6 +83,17 @@ static uint8_t g_pinState[JSH_PIN_COUNT];
 // Whether a pin is being used for soft PWM or not
 BITFIELD_DECL(jshPinSoftPWM, JSH_PIN_COUNT);
 
+static uint64_t DEVICE_INITIALISED_FLAGS = 0L;
+
+void jshSetDeviceInitialised(IOEventFlags device, bool isInit) {
+  uint64_t mask = 1ULL << (int)device;
+  if (isInit) {
+    DEVICE_INITIALISED_FLAGS |= mask;
+  } else {
+    DEVICE_INITIALISED_FLAGS &= ~mask;
+  }
+}
+
 /**
 * interrupt handler for gpio interrupts
 */
@@ -113,8 +131,10 @@ void jshPinSetStateRange( Pin start, Pin end, JshPinState state ) {
 void jshPinDefaultPullup() {
   // 6-11 are used by Flash chip
   // 32-33 are routed to rtc for xtal
+  // 16-17 are used for PSRAM (future use)
   jshPinSetStateRange(0,0,JSHPINSTATE_GPIO_IN_PULLUP);
-  jshPinSetStateRange(12,19,JSHPINSTATE_GPIO_IN_PULLUP);
+  jshPinSetStateRange(12,15,JSHPINSTATE_GPIO_IN_PULLUP);
+  jshPinSetStateRange(18,19,JSHPINSTATE_GPIO_IN_PULLUP);
   jshPinSetStateRange(21,22,JSHPINSTATE_GPIO_IN_PULLUP);
   jshPinSetStateRange(25,27,JSHPINSTATE_GPIO_IN_PULLUP);
   jshPinSetStateRange(34,39,JSHPINSTATE_GPIO_IN_PULLUP);
@@ -125,21 +145,22 @@ void jshPinDefaultPullup() {
  * Initialize the JavaScript hardware interface.
  */
 void jshInit() {
-  esp32_wifi_init();
+  if(ESP32_Get_NVS_Status(ESP_NETWORK_WIFI)) esp32_wifi_init();
+#ifdef BLUETOOTH
+  if(ESP32_Get_NVS_Status(ESP_NETWORK_BLE)) gattc_init();
+#endif
   jshInitDevices();
   BITFIELD_CLEAR(jshPinSoftPWM);
   if (JSHPINSTATE_I2C != 13 || JSHPINSTATE_GPIO_IN_PULLDOWN != 6 || JSHPINSTATE_MASK != 15) {
     jsError("JshPinState #defines have changed, please update pinStateToString()");
   }
-  /*
-  jsWarn( "JSHPINSTATE_I2C %d\n",JSHPINSTATE_I2C );
-  jsWarn( "JSHPINSTATE_GPIO_IN_PULLDOWN %d\n",JSHPINSTATE_GPIO_IN_PULLDOWN );
-  jsWarn( "JSHPINSTATE_MASK %d\n",JSHPINSTATE_MASK );
-  */
   gpio_isr_register(gpio_intr_handler,NULL,0,NULL);  //changed to automatic assign of interrupt
   // Initialize something for each of the possible pins.
   jshPinDefaultPullup();
 } // End of jshInit
+
+void jshKill() {
+}
 
 /**
  * Reset the Espruino environment.
@@ -147,18 +168,21 @@ void jshInit() {
 void jshReset() {
   jshResetDevices();
   jshPinDefaultPullup() ;
-  UartReset();
+//  UartReset();
   RMTReset();
   ADCReset();
   SPIReset();
   I2CReset();
+#ifdef BLUETOOTH
+  if(ESP32_Get_NVS_Status(ESP_NETWORK_BLE)) gatts_reset(false);
+#endif
 }
 
 /**
  * Re-init the ESP32 after a soft-reset
  */
 void jshSoftInit() {
-  jswrap_esp32_wifi_soft_init();
+  if(ESP32_Get_NVS_Status(ESP_NETWORK_WIFI)) jswrap_esp32_wifi_soft_init();
 }
 
 /**
@@ -173,7 +197,7 @@ void jshIdle() {
 // ESP32 chips don't have a serial number but they do have a MAC address
 int jshGetSerialNumber(unsigned char *data, int maxChars) {
   assert(maxChars >= 6); // it's 32
-  esp_wifi_get_mac(WIFI_IF_STA, data);
+  esp_efuse_mac_get_default(data);
   return 6;
 }
 
@@ -285,6 +309,13 @@ JshPinState jshPinGetState(Pin pin) {
   return g_pinState[pin];
 }
 
+/** 
+ * Check if state is default - return true if default
+*/
+bool jshIsPinStateDefault(Pin pin, JshPinState state) {
+  return state == JSHPINSTATE_GPIO_IN_PULLUP || state == JSHPINSTATE_ADC_IN;
+}
+
 //===== GPIO and PIN stuff =====
 
 /**
@@ -381,13 +412,17 @@ void jshSetOutputValue(JshPinFunction func, int value) {
  */
 void jshEnableWatchDog(JsVarFloat timeout) {
   UNUSED(timeout);
+#ifdef DEBUG
   jsError(">> jshEnableWatchDog Not implemented,using taskwatchdog from RTOS");
+#endif
 }
 
 
 // Kick the watchdog
 void jshKickWatchDog() {
+#ifdef DEBUG
   jsError(">> jshKickWatchDog Not implemented,using taskwatchdog from RTOS");
+#endif
 }
 
 
@@ -398,42 +433,6 @@ bool CALLED_FROM_INTERRUPT jshGetWatchedPinState(IOEventFlags eventFlag) { // ca
   gpio_num_t gpioNum = pinToESP32Pin((Pin)(eventFlag-EV_EXTI0));
   bool level = gpio_get_level(gpioNum);
   return level;
-}
-
-
-/**
- * Set the value of the pin to be the value supplied and then wait for
- * a given period and set the pin value again to be the opposite.
- */
-void jshPinPulse(
-    Pin pin,              //!< The pin to be pulsed.
-    bool pulsePolarity,   //!< The value to be pulsed into the pin.
-    JsVarFloat pulseTime  //!< The duration in milliseconds to hold the pin.
-) {
-  // ESP32 specific version, replaced by Espruino Style version from nrf52
-  //int duration = (int)pulseTime * 1000; //from millisecs to microsecs
-  //sendPulse(pin, pulsePolarity, duration);
-
-  // ---- USE TIMER FOR PULSE
-  if (!jshIsPinValid(pin)) {
-       jsExceptionHere(JSET_ERROR, "Invalid pin!");
-       return;
-  }
-  if (pulseTime<=0) {
-    // just wait for everything to complete
-    jstUtilTimerWaitEmpty();
-    return;
-  } else {
-    // find out if we already had a timer scheduled
-    UtilTimerTask task;
-    if (!jstGetLastPinTimerTask(pin, &task)) {
-      // no timer - just start the pulse now!
-      jshPinOutput(pin, pulsePolarity);
-      task.time = jshGetSystemTime();
-    }
-    // Now set the end of the pulse to happen on a timer
-    jstPinOutputAtTime(task.time + jshGetTimeFromMilliseconds(pulseTime), &pin, 1, !pulsePolarity);
-  }
 }
 
 
@@ -505,12 +504,12 @@ bool jshIsEventForPin(
 
 
 void jshUSARTSetup(IOEventFlags device, JshUSARTInfo *inf) {
-  
+
   if (inf->errorHandling) {
     jsExceptionHere(JSET_ERROR, "ESP32 Espruino builds can't handle framing/parity errors (errors:true)");
     return;
-  }  
-  
+  }
+
   initSerial(device,inf);
 }
 
@@ -527,8 +526,21 @@ void jshUSARTKick(
 ) {
   int c = jshGetCharToTransmit(device);
   while(c >= 0) {
-    if(device == EV_SERIAL1) uart_tx_one_char((uint8_t)c); 
-    else writeSerial(device,(uint8_t)c);
+	switch(device){
+#ifdef BLUETOOTH
+		case EV_BLUETOOTH:
+			gatts_sendNotification(c);
+			break; 
+#endif
+		case EV_SERIAL1:
+			uart_tx_one_char((uint8_t)c);
+			break;
+		default:
+			writeSerial(device,(uint8_t)c);
+			break;
+    //if(device == EV_SERIAL1) uart_tx_one_char((uint8_t)c); 
+    //else writeSerial(device,(uint8_t)c);
+	}
     c = jshGetCharToTransmit(device);
   }
 }
@@ -570,7 +582,7 @@ void jshSetSystemTime(JsSysTime newTime) {
   struct timezone tz;
   
   tm.tv_sec=(time_t)(newTime/1000000L);
-  tm.tv_usec=0;
+  tm.tv_usec=(suseconds_t) (newTime - tm.tv_sec * 1000000L);
   tz.tz_minuteswest=0;
   tz.tz_dsttime=0;
   settimeofday(&tm, &tz);
@@ -592,7 +604,6 @@ void jshUtilTimerReschedule(JsSysTime period) {
 
 //===== Miscellaneous =====
 
-static uint64_t DEVICE_INITIALISED_FLAGS = 0L;
 bool jshIsDeviceInitialised(IOEventFlags device) {
   uint64_t mask = 1ULL << (int)device;
   return (DEVICE_INITIALISED_FLAGS & mask) != 0L;
@@ -602,14 +613,6 @@ bool jshIsDeviceInitialised(IOEventFlags device) {
 // return 0;
 } // End of jshIsDeviceInitialised
 
-void jshSetDeviceInitialised(IOEventFlags device, bool isInit) {
-  uint64_t mask = 1ULL << (int)device;
-  if (isInit) {
-    DEVICE_INITIALISED_FLAGS |= mask;
-  } else {
-    DEVICE_INITIALISED_FLAGS &= ~mask;
-  }
-}
 
 // the esp32 temperature sensor - undocumented library function call. Unsure of values returned.
 JsVarFloat jshReadTemperature() {
@@ -700,10 +703,11 @@ void addFlashArea(JsVar *jsFreeFlash, uint32_t addr, uint32_t length) {
 JsVar *jshFlashGetFree() {
   JsVar *jsFreeFlash = jsvNewEmptyArray();
   if (!jsFreeFlash) return 0;
-  // Space should be reserved here in the parition table - assume 4Mb EEPROM
-  // Set just after programme save area 
-  addFlashArea(jsFreeFlash, 0x100000 + FLASH_PAGE * 16, 0x300000-FLASH_PAGE * 16-1);
-  
+  // Space reserved here in the parition table -  using sub type 0x40
+  // This should be read from the partition table
+  addFlashArea(jsFreeFlash, 0xE000, 0x2000);
+  addFlashArea(jsFreeFlash, 0x310000, 0x10000);
+  addFlashArea(jsFreeFlash, 0x360000, 0xA0000);
   return jsFreeFlash;
 }
 
@@ -727,7 +731,7 @@ size_t jshFlashGetMemMapAddress(size_t ptr) {
     return 0;
   }
   // Flash memory access is offset to 0, so remove starting location as already accounted for
-  return &romdata_jscode[ptr - 0x100000 ];
+  return (size_t)&romdata_jscode[ptr - FLASH_SAVED_CODE_START ];
 }
 
 unsigned int jshSetSystemClock(JsVar *options) {
@@ -740,8 +744,13 @@ unsigned int jshSetSystemClock(JsVar *options) {
  * Convert an Espruino pin id to a native ESP32 pin id.
  */
 gpio_num_t pinToESP32Pin(Pin pin) {
-  if ( pin < 40 ) 
+  if ( pin < 40 )
     return pin + GPIO_NUM_0;
   jsError( "pinToESP32Pin: Unknown pin: %d", pin);
   return -1;
+}
+
+/// Perform a proper hard-reboot of the device
+void jshReboot() {
+  esp_restart(); // Call the ESP-IDF to restart the ESP32.
 }

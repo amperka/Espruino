@@ -19,8 +19,10 @@
 
 #define JSI_WATCHES_NAME "watches"
 #define JSI_TIMERS_NAME "timers"
+#define JSI_DEBUG_HISTORY_NAME "dbghist"
 #define JSI_HISTORY_NAME "history"
-#define JSI_INIT_CODE_NAME "init"
+#define JSI_INIT_CODE_NAME "init" ///< used to temporarily store initialisation JS code for state in save()
+#define JSI_LOAD_CODE_NAME "load" ///< used to temporarily store the name of a file to load from Storage when load(xyz) is used
 #define JSI_JSFLAGS_NAME "flags"
 #define JSI_ONINIT_NAME "onInit"
 
@@ -57,7 +59,13 @@ void jsiExecuteObjectCallbacks(JsVar *object, const char *callbackName, JsVar **
 bool jsiExecuteEventCallback(JsVar *thisVar, JsVar *callbackVar, unsigned int argCount, JsVar **argPtr);
 /// Same as above, but with a JsVarArray (this calls jsiExecuteEventCallback, so use jsiExecuteEventCallback where possible)
 bool jsiExecuteEventCallbackArgsArray(JsVar *thisVar, JsVar *callbackVar, JsVar *argsArray);
+// Execute the named Event callback on object, and return true if it exists
+bool jsiExecuteEventCallbackName(JsVar *obj, const char *cbName, unsigned int argCount, JsVar **argPtr);
+/// Utility version of jsiExecuteEventCallback for calling events on global variables
+bool jsiExecuteEventCallbackOn(const char *objectName, const char *cbName, unsigned int argCount, JsVar **argPtr);
 
+/// Create a timeout in JS to execute the given native function (outside of an IRQ). Returns the index
+JsVar *jsiSetTimeout(void (*functionPtr)(void), JsVarFloat milliseconds);
 
 IOEventFlags jsiGetDeviceFromClass(JsVar *deviceClass);
 JsVar *jsiGetClassNameFromDevice(IOEventFlags device);
@@ -127,6 +135,7 @@ void jsiSetSleep(JsiSleepType isSleep);
 #define USART_BAUDRATE_NAME "_baudrate"
 #define DEVICE_OPTIONS_NAME "_options"
 #define INIT_CALLBACK_NAME JS_EVENT_PREFIX"init" ///< Callback for `E.on('init'`
+#define KILL_CALLBACK_NAME JS_EVENT_PREFIX"kill" ///< Callback for `E.on('kill'`
 #define PASSWORD_VARIABLE_NAME "pwd"
 
 typedef enum {
@@ -145,10 +154,12 @@ typedef enum {
   JSIS_CONSOLE_FORCED     = 1<<8, ///< see jsiSetConsoleDevice
   JSIS_WATCHDOG_AUTO      = 1<<9, ///< Automatically kick the watchdog timer on idle
   JSIS_PASSWORD_PROTECTED = 1<<10, ///< Password protected
-  JSIS_COMPLETELY_RESET   = 1<<11, ///< Has the board powered on, having not loaded anything from flash
+  JSIS_COMPLETELY_RESET   = 1<<11, ///< Has the board powered on *having not loaded anything from flash*
+  JSIS_FIRST_BOOT         = 1<<12, ///< Is this the first time we started, or has load/reset/etc been called?
 
   JSIS_ECHO_OFF_MASK = JSIS_ECHO_OFF|JSIS_ECHO_OFF_FOR_LINE,
-  JSIS_SOFTINIT_MASK = JSIS_PASSWORD_PROTECTED // stuff that DOESN'T get reset on softinit
+  JSIS_SOFTINIT_MASK = JSIS_PASSWORD_PROTECTED|JSIS_WATCHDOG_AUTO|JSIS_TODO_MASK|JSIS_FIRST_BOOT|JSIS_COMPLETELY_RESET // stuff that DOESN'T get reset on softinit
+    // watchdog can't be reset without a reboot so if it's set to auto we must keep it as auto
 } PACKED_FLAGS JsiStatus;
 
 extern JsiStatus jsiStatus;
@@ -163,6 +174,7 @@ extern JsSysTime jsiLastIdleTime; ///< The last time we went around the idle loo
 void jsiDumpJSON(vcbprintf_callback user_callback, void *user_data, JsVar *data, JsVar *existing);
 void jsiDumpState(vcbprintf_callback user_callback, void *user_data);
 #define TIMER_MIN_INTERVAL 0.1 // in milliseconds
+#define TIMER_MAX_INTERVAL 31536000001000ULL // in milliseconds
 extern JsVarRef timerArray; // Linked List of timers to check and run
 extern JsVarRef watchArray; // Linked List of input watches to check and run
 

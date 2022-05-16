@@ -20,6 +20,7 @@ void jswrap_interface_setBusyIndicator(JsVar *pinVar);
 void jswrap_interface_setSleepIndicator(JsVar *pinVar);
 void jswrap_interface_setDeepSleep(bool sleep);
 void jswrap_interface_trace(JsVar *root);
+void jswrap_interface_load(JsVar *storageName);
 void jswrap_interface_reset(bool clearFlash);
 void jswrap_interface_print(JsVar *v);
 void jswrap_interface_edit(JsVar *funcName);
@@ -29,6 +30,7 @@ JsVar *jswrap_interface_getSerial();
 
 JsVar *jswrap_interface_setInterval(JsVar *func, JsVarFloat timeout, JsVar *args);
 JsVar *jswrap_interface_setTimeout(JsVar *func, JsVarFloat timeout, JsVar *args);
-void jswrap_interface_clearInterval(JsVar *idVar);
-void jswrap_interface_clearTimeout(JsVar *idVar);
+// also see jsiSetTimeout for native implementation
+void jswrap_interface_clearInterval(JsVar *idVarArr);
+void jswrap_interface_clearTimeout(JsVar *idVarArr);
 void jswrap_interface_changeInterval(JsVar *idVar, JsVarFloat interval);

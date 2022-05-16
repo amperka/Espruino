@@ -26,7 +26,7 @@
 
 #define I2C_SDA 7
 #define I2C_SCL 8
-// SX1509 IO Expader
+// SX1509 IO Expander
 #define SX_I2C_ADDR 0x3e
 #define SX_RESET 16
 #define SX_POWER 30
@@ -60,7 +60,7 @@ unsigned char sxReadReg(unsigned reg) {
 
 void jshVirtualPinInitialise() {
   jshPinOutput(SX_POWER, 1); // enable IO expander power
-  jshPinSetValue(i2cInfo.pinSDA, 1);
+  jshPinSetValue(i2cInfo.pinSCL, 1);
   jshPinSetState(i2cInfo.pinSCL,  JSHPINSTATE_GPIO_OUT_OPENDRAIN_PULLUP);
   jshPinSetValue(i2cInfo.pinSDA, 1);
   jshPinSetState(i2cInfo.pinSDA,  JSHPINSTATE_GPIO_OUT_OPENDRAIN_PULLUP);
@@ -86,6 +86,10 @@ bool jshVirtualPinGetValue(Pin pin) {
   return 0;
 }
 
+JsVarFloat jshVirtualPinGetAnalogValue(Pin pin) {
+  return NAN;
+}
+
 void jshVirtualPinSetState(Pin pin, JshPinState state) {
   int p = pinInfo[pin].pin;
   if (JSHPINSTATE_IS_OUTPUT(state))
@@ -94,6 +98,10 @@ void jshVirtualPinSetState(Pin pin, JshPinState state) {
     sxDirection |= (1<<p);
   if (p<8) sxWriteReg(SX_REG_DIRA, sxDirection&0xFF);
   else sxWriteReg(SX_REG_DIRB, sxDirection>>8);
+}
+
+JshPinState jshVirtualPinGetState(Pin pin) {
+  return JSHPINSTATE_UNDEFINED;
 }
 
 /*JSON{"type" : "variable", "name" : "MOS1", "generate_full" : "18", "return" : ["pin","A Pin"]

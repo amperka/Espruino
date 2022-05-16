@@ -39,7 +39,9 @@
   #include "mbedtls/ctr_drbg.h"
   #include "jswrap_crypto.h"
 #endif
+#if defined(USE_NETWORK_JS)
 #include "network_js.h"
+#endif
 
 JsNetworkState networkState =
 #ifdef LINUX
@@ -195,6 +197,7 @@ void networkCreate(JsNetwork *net, JsNetworkType type) {
   net->data.pinCS = PIN_UNDEFINED;
   net->data.pinIRQ = PIN_UNDEFINED;
   net->data.pinEN = PIN_UNDEFINED;
+  net->data.recvBufferSize = 0; // use net->chunkLen
   jsvObjectSetChildAndUnLock(execInfo.hiddenRoot, NETWORK_VAR_NAME, net->networkVar);
   networkSet(net);
   networkGetFromVar(net);
@@ -227,7 +230,7 @@ bool networkGetFromVar(JsNetwork *net) {
 
   // Retrieve the data for the network var and save in the data property of the JsNetwork
   // structure.
-  jsvGetString(net->networkVar, (char *)&net->data, sizeof(JsNetworkData)+1/*trailing zero*/);
+  jsvGetStringChars(net->networkVar,0,(char *)&net->data, sizeof(JsNetworkData));
 
   // Now we know which kind of network we are working with, invoke the corresponding initialization
   // function to set the callbacks for this network tyoe.
@@ -247,11 +250,18 @@ bool networkGetFromVar(JsNetwork *net) {
 #if defined(LINUX)
   case JSNETWORKTYPE_SOCKET : netSetCallbacks_linux(net); break;
 #endif
+#if defined(USE_NETWORK_JS)
   case JSNETWORKTYPE_JS : netSetCallbacks_js(net); break;
+#endif
   default:
     jsExceptionHere(JSET_INTERNALERROR, "Unknown network device %d", net->data.type);
     networkFree(net);
     return false;
+  }
+
+  // Adjust for SO_RCVBUF
+  if (net->data.recvBufferSize > net->chunkSize) {
+    net->chunkSize = net->data.recvBufferSize;
   }
 
   // Save the current network as a global.
@@ -325,7 +335,7 @@ int ssl_recv(void *ctx, unsigned char *buf, size_t len) {
 int ssl_entropy(void *data, unsigned char *output, size_t len ) {
   NOT_USED(data);
   size_t i;
-  unsigned int r;
+  unsigned int r = 0;
   for (i=0;i<len;i++) {
     if (!(i&3)) r = jshGetRandomNumber();
     output[i] = (unsigned char)r;
@@ -508,7 +518,6 @@ bool ssl_newSocketData(int sckt, JsVar *options) {
    * Also see https://tls.mbed.org/kb/how-to/reduce-mbedtls-memory-and-storage-footprint
    * */
 
-  assert(sckt>=0 && sckt<32);
   // Create a new socketData using the variable
   JsVar *ssl = jsvObjectGetChild(execInfo.root, "ssl", JSV_OBJECT);
   if (!ssl) return false; // out of memory?
@@ -672,7 +681,6 @@ int netCreateSocket(JsNetwork *net, SocketType socketType, uint32_t host, unsign
   if (sckt<0) return sckt;
 
 #ifdef USE_TLS
-  assert(sckt>=0 && sckt<32);
   if (socketType & ST_TLS) {
     if (ssl_newSocketData(sckt, options)) {
     } else {

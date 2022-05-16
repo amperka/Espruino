@@ -17,6 +17,7 @@
 
 #include "jsutils.h"
 #include "jsvar.h"
+#include "jsdevices.h"
 
 /** This is the enum used to store how functions should be called
  * by jsnative.c.
@@ -65,6 +66,11 @@ typedef enum {
 // reads. Telling the compiler to pack the structs defeats that, so we have to take it out.
 #define PACKED_JSW_SYM
 #endif
+#if defined(__arm64__)
+#undef PACKED_JSW_SYM
+#define PACKED_JSW_SYM __attribute__((aligned(2)))
+#endif
+
 
 /// Structure for each symbol in the list of built-in symbols
 typedef struct {
@@ -107,11 +113,17 @@ const char *jswGetBasicObjectPrototypeName(const char *name);
 /** Tasks to run on Idle. Returns true if either one of the tasks returned true (eg. they're doing something and want to avoid sleeping) */
 bool jswIdle();
 
+/** Tasks to run on Hardware Initialisation (called once at boot time, after jshInit, before jsvInit/etc) */
+void jswHWInit();
+
 /** Tasks to run on Initialisation */
 void jswInit();
 
 /** Tasks to run on Deinitialisation */
 void jswKill();
+
+/** Tasks to run when a character is received on a certain event channel. True if handled and shouldn't go to IRQ */
+bool jswOnCharEvent(IOEventFlags channel, char charData);
 
 /** If we get this in 'require', do we have the object for this
   inside the interpreter already? If so, return the native function
@@ -123,5 +135,11 @@ const char *jswGetBuiltInJSLibrary(const char *name);
 
 /** Return a comma-separated list of built-in libraries */
 const char *jswGetBuiltInLibraryNames();
+
+#ifdef USE_CALLFUNCTION_HACK
+// on Emscripten and i386 we cant easily hack around function calls with floats/etc, plus we have enough
+// resources, so just brute-force by handling every call pattern we use in a switch
+JsVar *jswCallFunctionHack(void *function, JsnArgumentType argumentSpecifier, JsVar *thisParam, JsVar **paramData, int paramCount);
+#endif
 
 #endif // JSWRAPPER_H

@@ -46,8 +46,13 @@ print("BOARD "+boardname)
 board = importlib.import_module(boardname)
 pins = board.get_pins()
 # -----------------------------------------------------------------------------------------
+#allow to override board name so we can build for same board from multiple board files
+if "boardname" in board.info:
+  boardname = board.info["boardname"]
+  print("BOARDNAME "+boardname)
 
 LINUX = board.chip["family"]=="LINUX"
+EMSCRIPTEN = board.chip["family"]=="EMSCRIPTEN"
 
 if not "default_console" in board.info:
   board.info["default_console"] = "EV_SERIAL1"
@@ -73,7 +78,7 @@ print("VarCache size = "+str(var_cache_size))
 flash_page_size = 1024
 
 if LINUX:
-  flash_saved_code_pages = 8
+  flash_saved_code_pages = board.chip['flash']*1024 / flash_page_size
   total_flash = flash_page_size*flash_saved_code_pages  
 else: # NOT LINUX
   # 100xB and 103xB are mid-density, so have 1k page sizes
@@ -99,11 +104,16 @@ else: # NOT LINUX
   # F4 has different page sizes in different places
   total_flash = board.chip["flash"]*1024
 
+flash_saved_code2_pages = 0
 if "saved_code" in board.chip:
   flash_saved_code_start = board.chip["saved_code"]["address"]
   flash_page_size = board.chip["saved_code"]["page_size"]
   flash_saved_code_pages = board.chip["saved_code"]["pages"]
   flash_available_for_code = board.chip["saved_code"]["flash_available"]*1024
+
+  if "address2" in board.chip["saved_code"]:
+    flash_saved_code2_start = board.chip["saved_code"]["address2"]
+    flash_saved_code2_pages = board.chip["saved_code"]["pages2"]
 else:
   flash_saved_code_start = "(FLASH_START + FLASH_TOTAL - FLASH_SAVED_CODE_LENGTH)"
   flash_available_for_code = total_flash - (flash_saved_code_pages*flash_page_size)
@@ -140,10 +150,17 @@ def codeOutDevice(device):
         codeOut("#define "+device+"_PINSTATE JSHPINSTATE_GPIO_"+board.devices[device]["pinstate"]);
     if device[0:3]=="LED":
       codeOut("#define "+device+"_ONSTATE "+("0" if "inverted" in board.devices[device] else "1"))
+    if "no_bootloader" in board.devices[device]:
+      codeOut("#define "+device+"_NO_BOOTLOADER 1 // don't use this in the bootloader");
 
 def codeOutDevicePin(device, pin, definition_name):
   if device in board.devices:
     codeOut("#define "+definition_name+" "+toPinDef(board.devices[device][pin]))
+
+def codeOutDevicePins(device, definition_name):
+  for entry in board.devices[device]:
+    if entry.startswith("pin_") or entry=="pin":
+      codeOut("#define "+definition_name+"_"+entry.upper()+" "+toPinDef(board.devices[device][entry]))
 # -----------------------------------------------------------------------------------------
 
 
@@ -171,8 +188,11 @@ linker_etext_var = "_etext"; # End of text (function) section
 # External interrupt count
 exti_count = 16 
 
+
 if board.chip["family"]=="LINUX":
   board.chip["class"]="LINUX"
+elif board.chip["family"]=="EMSCRIPTEN":
+  board.chip["class"]="EMSCRIPTEN"
 elif board.chip["family"]=="STM32F1":
   board.chip["class"]="STM32"
   codeOut('#include "stm32f10x.h"')
@@ -238,19 +258,22 @@ if board.chip["class"]=="MBED":
   """);
 
 codeOut("""
-
 // SYSTICK is the counter that counts up and that we use as the real-time clock
 // The smaller this is, the longer we spend in interrupts, but also the more we can sleep!
 #define SYSTICK_RANGE 0x1000000 // the Maximum (it is a 24 bit counter) - on Olimexino this is about 0.6 sec
 #define SYSTICKS_BEFORE_USB_DISCONNECT 2
 
+<<<<<<< HEAD
 // When to send the message that the IO buffer is getting full
 #define IOBUFFER_XOFF ((TXBUFFERMASK)*6/8)
 // When to send the message that we can start receiving again
 #define IOBUFFER_XON ((TXBUFFERMASK)*3/8)
+=======
+>>>>>>> master
 #define DEFAULT_BUSY_PIN_INDICATOR (Pin)-1 // no indicator
 #define DEFAULT_SLEEP_PIN_INDICATOR (Pin)-1 // no indicator
 """);
+
 
 util_timer = pinutils.get_device_util_timer(board)
 if util_timer!=False:
@@ -292,11 +315,16 @@ else:
 
 codeOut("#define FLASH_SAVED_CODE_START            "+str(flash_saved_code_start))
 codeOut("#define FLASH_SAVED_CODE_LENGTH           "+str(int(flash_page_size*flash_saved_code_pages)))
+if flash_saved_code2_pages:
+  codeOut("// Extra flash pages in external flash")
+  codeOut("#define FLASH_SAVED_CODE2_START            "+str(flash_saved_code2_start))
+  codeOut("#define FLASH_SAVED_CODE2_LENGTH           "+str(int(flash_page_size*flash_saved_code2_pages)))
 codeOut("");
 
 codeOut("#define CLOCK_SPEED_MHZ                      "+str(board.chip["speed"]))
 codeOut("#define USART_COUNT                          "+str(board.chip["usart"]))
-codeOut("#define SPI_COUNT                            "+str(board.chip["spi"]))
+if "spi" in board.chip:
+  codeOut("#define SPI_COUNT                            "+str(board.chip["spi"]))
 codeOut("#define I2C_COUNT                            "+str(board.chip["i2c"]))
 codeOut("#define ADC_COUNT                            "+str(board.chip["adc"]))
 codeOut("#define DAC_COUNT                            "+str(board.chip["dac"]))
@@ -312,13 +340,34 @@ if "default_console_baudrate" in board.info:
 
 
 codeOut("");
+
+xoff_thresh = 6 # how full (out of 8) is buffer when we sent the XOFF flow control char to say 'stop'
+xon_thresh = 3 # how full (out of 8) is buffer when we sent the XON flow control char to say 'go'
+
 if LINUX:
   bufferSizeIO = 256
   bufferSizeTX = 256
   bufferSizeTimer = 16
+elif EMSCRIPTEN:
+  bufferSizeIO = 256
+  bufferSizeTX = 256
+  bufferSizeTimer = 16
 else:
-  bufferSizeIO = 64 if board.chip["ram"]<20 else 128
-  bufferSizeTX = 32 if board.chip["ram"]<20 else 128
+  # IO buffer - for received chars, setWatch, etc
+  bufferSizeIO = 64
+  if board.chip["ram"]>=20: bufferSizeIO = 128
+  if board.chip["ram"]>=96: bufferSizeIO = 256
+  # NRF52 needs this as Bluetooth traffic is funnelled through the buffer
+  if board.chip["family"]=="NRF52": 
+    bufferSizeIO = 256
+    # we often use increased MTUs and even with a big buffer these mean we need to leave
+    # a lot of space when we send XOFF (due to delay in response from sender)
+    xoff_thresh = 3 
+    xon_thresh = 2
+  # TX buffer - for print/write/etc
+  bufferSizeTX = 32 
+  if board.chip["ram"]>=20: bufferSizeTX = 128
+  if board.chip["ram"]>=128: bufferSizeTX = 256
   bufferSizeTimer = 4 if board.chip["ram"]<20 else 16
 
 if 'util_timer_tasks' in board.info:
@@ -327,6 +376,13 @@ if 'util_timer_tasks' in board.info:
 codeOut("#define IOBUFFERMASK "+str(bufferSizeIO-1)+" // (max 255) amount of items in event buffer - events take 5 bytes each")
 codeOut("#define TXBUFFERMASK "+str(bufferSizeTX-1)+" // (max 255) amount of items in the transmit buffer - 2 bytes each")
 codeOut("#define UTILTIMERTASK_TASKS ("+str(bufferSizeTimer)+") // Must be power of 2 - and max 256")
+
+codeOut("");
+
+codeOut("// When to send the message that the IO buffer is getting full")
+codeOut("#define IOBUFFER_XOFF ((TXBUFFERMASK)*"+str(xoff_thresh)+"/8)")
+codeOut("// When to send the message that we can start receiving again")
+codeOut("#define IOBUFFER_XON ((TXBUFFERMASK)*"+str(xon_thresh)+"/8)")
 
 codeOut("");
 
@@ -347,6 +403,19 @@ if "USB" in board.devices:
   if "pin_vsense" in board.devices["USB"]: codeOutDevicePin("USB", "pin_vsense", "USB_VSENSE_PIN")
 
 if "LCD" in board.devices:
+  codeOut("#define LCD_CONTROLLER_"+board.devices["LCD"]["controller"].upper())
+  if "width" in board.devices["LCD"]:
+    codeOut("#define LCD_WIDTH "+str(board.devices["LCD"]["width"]))
+  if "height" in board.devices["LCD"]:
+    codeOut("#define LCD_HEIGHT "+str(board.devices["LCD"]["height"]))
+  if "bpp" in board.devices["LCD"]:
+    codeOut("#define LCD_BPP "+str(board.devices["LCD"]["bpp"]))
+  if "bitrate" in board.devices["LCD"]:
+    codeOut("#define LCD_SPI_BITRATE "+str(board.devices["LCD"]["bitrate"]))
+  if "pin_bl" in board.devices["LCD"]:
+    codeOutDevicePin("LCD", "pin_bl", "LCD_BL")
+  if "pin_en" in board.devices["LCD"]:
+    codeOutDevicePin("LCD", "pin_en", "LCD_EN")
   if board.devices["LCD"]["controller"]=="fsmc":
     for i in range(0,16):
       codeOutDevicePin("LCD", "pin_d"+str(i), "LCD_FSMC_D"+str(i))
@@ -357,14 +426,25 @@ if "LCD" in board.devices:
       codeOutDevicePin("LCD", "pin_rs", "LCD_FSMC_RS")
     if "pin_reset" in board.devices["LCD"]:
       codeOutDevicePin("LCD", "pin_reset", "LCD_RESET")
-    if "pin_bl" in board.devices["LCD"]:
-      codeOutDevicePin("LCD", "pin_bl", "LCD_BL")
-  if board.devices["LCD"]["controller"]=="ssd1306" or board.devices["LCD"]["controller"]=="st7567":
+  if board.devices["LCD"]["controller"]=="ssd1306" or board.devices["LCD"]["controller"]=="st7567" or board.devices["LCD"]["controller"]=="st7789v" or board.devices["LCD"]["controller"]=="st7735" or board.devices["LCD"]["controller"]=="gc9a01":
     codeOutDevicePin("LCD", "pin_mosi", "LCD_SPI_MOSI")
     codeOutDevicePin("LCD", "pin_sck", "LCD_SPI_SCK")
     codeOutDevicePin("LCD", "pin_cs", "LCD_SPI_CS")
     codeOutDevicePin("LCD", "pin_dc", "LCD_SPI_DC")
     codeOutDevicePin("LCD", "pin_rst", "LCD_SPI_RST")
+  if board.devices["LCD"]["controller"]=="LPM013M126":
+    codeOutDevicePin("LCD", "pin_mosi", "LCD_SPI_MOSI")
+    codeOutDevicePin("LCD", "pin_sck", "LCD_SPI_SCK")
+    codeOutDevicePin("LCD", "pin_cs", "LCD_SPI_CS")
+    codeOutDevicePin("LCD", "pin_disp", "LCD_DISP")
+    codeOutDevicePin("LCD", "pin_extcomin", "LCD_EXTCOMIN")
+  if "pin_miso" in board.devices["LCD"]:
+    codeOutDevicePin("LCD", "pin_miso", "LCD_SPI_MISO")
+  if "pin_tearing" in board.devices["LCD"]:
+    codeOutDevicePin("LCD", "pin_tearing", "LCD_TEARING")
+
+  if board.devices["LCD"]["controller"]=="st7789_8bit":
+    codeOutDevicePins("LCD","LCD");
 
 if "SD" in board.devices:
   if not "pin_d3" in board.devices["SD"]: # NOT SDIO - normal SD
@@ -388,7 +468,61 @@ if "CAPSENSE" in board.devices:
   codeOutDevicePin("CAPSENSE", "pin_rx", "CAPSENSE_RX_PIN")
   codeOutDevicePin("CAPSENSE", "pin_tx", "CAPSENSE_TX_PIN")
 
-for device in ["USB","SD","LCD","JTAG","ESP8266","IR"]:
+if "VIBRATE" in board.devices:
+  codeOutDevicePins("VIBRATE", "VIBRATE")
+
+if "SPEAKER" in board.devices:
+  codeOutDevicePins("SPEAKER", "SPEAKER")
+
+if "HEARTRATE" in board.devices:
+  codeOutDevicePins("HEARTRATE", "HEARTRATE")
+  if "addr" in board.devices["HEARTRATE"]:
+    codeOut("#define HEARTRATE_ADDR "+str(board.devices["HEARTRATE"]["addr"]))
+  codeOut("#define HEARTRATE_DEVICE_"+board.devices["HEARTRATE"]["device"].upper()+" 1")
+
+if "BAT" in board.devices:
+  codeOutDevicePins("BAT", "BAT")
+
+if "GPS" in board.devices:
+  if "pin_en" in board.devices["GPS"]: codeOutDevicePin("GPS", "pin_en", "GPS_PIN_EN")
+  codeOutDevicePins("GPS", "GPS")
+
+if "ACCEL" in board.devices:
+  codeOut("#define ACCEL_DEVICE \""+board.devices["ACCEL"]["device"].upper()+"\"")
+  codeOut("#define ACCEL_DEVICE_"+board.devices["ACCEL"]["device"].upper()+" 1")
+  codeOut("#define ACCEL_ADDR "+str(board.devices["ACCEL"]["addr"]))
+  codeOutDevicePins("ACCEL", "ACCEL")
+
+if "MAG" in board.devices:
+  codeOut("#define MAG_DEVICE \""+board.devices["MAG"]["device"].upper()+"\"")
+  codeOut("#define MAG_DEVICE_"+board.devices["MAG"]["device"].upper()+" 1")
+  if "addr" in board.devices["MAG"]:
+    codeOut("#define MAG_ADDR "+str(board.devices["MAG"]["addr"]))
+  codeOutDevicePins("MAG", "MAG")
+
+if "TEMP" in board.devices:
+  if "addr" in board.devices["TEMP"]:
+    codeOut("#define TEMP_ADDR "+str(board.devices["TEMP"]["addr"]))
+  codeOutDevicePins("TEMP", "TEMP")
+
+if "PRESSURE" in board.devices:
+  codeOut("#define PRESSURE_DEVICE \""+board.devices["PRESSURE"]["device"].upper()+"\"")
+  codeOut("#define PRESSURE_DEVICE_"+board.devices["PRESSURE"]["device"].upper()+" 1")
+  codeOut("#define PRESSURE_ADDR "+str(board.devices["PRESSURE"]["addr"]))
+  codeOutDevicePins("PRESSURE", "PRESSURE")
+
+if "TOUCH" in board.devices:
+  codeOut("#define TOUCH_DEVICE \""+board.devices["TOUCH"]["device"].upper()+"\"")
+  codeOut("#define TOUCH_ADDR "+str(board.devices["TOUCH"]["addr"]))
+  codeOutDevicePins("TOUCH", "TOUCH")
+
+if "SPIFLASH" in board.devices:
+  codeOut("#define SPIFLASH_PAGESIZE 4096")
+  codeOut("#define SPIFLASH_LENGTH "+str(board.devices["SPIFLASH"]["size"]))
+  codeOut("#define SPIFLASH_BASE "+str(board.devices["SPIFLASH"]["memmap_base"])+"UL")
+  codeOutDevicePins("SPIFLASH", "SPIFLASH")
+
+for device in pinutils.OTHER_DEVICES:
   if device in board.devices:
     for entry in board.devices[device]:
       if entry[:3]=="pin": usedPinChecks.append("(PIN)==" + toPinDef(board.devices[device][entry])+"/* "+device+" */")
@@ -417,8 +551,9 @@ codeOut("")
 codeOut("// definition to avoid compilation when Pin/platform config is not defined")
 codeOut("#define IS_PIN_USED_INTERNALLY(PIN) (("+")||(".join(usedPinChecks)+"))")
 codeOut("#define IS_PIN_A_LED(PIN) (("+")||(".join(ledChecks)+"))")
+codeOut("#ifndef IS_PIN_A_BUTTON")
 codeOut("#define IS_PIN_A_BUTTON(PIN) (("+")||(".join(btnChecks)+"))")
-
+codeOut("#endif")
 
 codeOut("""
 #endif // _PLATFORM_CONFIG_H

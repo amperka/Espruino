@@ -206,6 +206,7 @@ NOTE: Espruino does not yet support Async file IO, so this function behaves like
 Append the data to the given file, created a new file if it doesn't exist
 */
 bool jswrap_fs_writeOrAppendFile(JsVar *path, JsVar *data, bool append) {
+  if (!data) return false;
   JsVar *fMode = jsvNewFromString(append ? "a" : "w");
   JsVar *f = jswrap_E_openFile(path, fMode);
   jsvUnLock(fMode);
@@ -342,7 +343,7 @@ JsVar *jswrap_fs_stat(JsVar *path) {
 
       CalendarDate date;
       date.year = 1980+(int)((info.fdate>>9)&127);
-      date.month = (int)((info.fdate>>5)&15);
+      date.month = (int)(((info.fdate>>5)&15)-1);  // TomWS: Month is 0 based.
       date.day = (int)((info.fdate)&31);
       TimeInDay td;
       td.daysSinceEpoch = fromCalenderDate(&date);
@@ -350,7 +351,7 @@ JsVar *jswrap_fs_stat(JsVar *path) {
       td.min = (int)((info.ftime>>5)&63);
       td.sec = (int)((info.ftime)&63);
       td.ms = 0;
-      td.zone = 0;
+      td.zone = jsdGetTimeZone();  // TomWS: add adjustment for timezone offset introduced in date_from_milliseconds 
       jsvObjectSetChildAndUnLock(obj, "mtime", jswrap_date_from_milliseconds(fromTimeInDay(&td)));
       return obj;
     }

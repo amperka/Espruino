@@ -20,8 +20,12 @@
 
 #define MAX_ARGS 12
 
-#if defined(__i386__) || defined(__x86_64__)
-    #define USE_SEPARATE_DOUBLES // cdecl on x86 puts FP args elsewhere!
+#if defined(__i386__) && !defined(USE_CALLFUNCTION_HACK)
+  #error USE_CALLFUNCTION_HACK is required to make i386 builds work correctly
+#endif
+
+#if defined(__x86_64__) || defined(__arm64__)
+    #define USE_SEPARATE_DOUBLES
 #endif
 
 #if defined(__WORDSIZE) && __WORDSIZE == 64
@@ -46,8 +50,17 @@
   #define USE_SEPARATE_DOUBLES
 #endif
 
+#if defined(EMSCRIPTEN) && !defined(USE_CALLFUNCTION_HACK)
+  #error USE_CALLFUNCTION_HACK is required to make i386 builds work correctly
+#endif
+
+
 /** Call a function with the given argument specifiers */
 JsVar *jsnCallFunction(void *function, JsnArgumentType argumentSpecifier, JsVar *thisParam, JsVar **paramData, int paramCount) {
+#ifdef USE_CALLFUNCTION_HACK
+  // on Emscripten we cant easily hack around function calls with floats/etc so we must just do this brute-force by handling every call pattern we use
+  return jswCallFunctionHack(function, argumentSpecifier, thisParam, paramData, paramCount);
+#else
 #ifndef SAVE_ON_FLASH
   // Handle common call types quickly:
   // ------- void(void)
@@ -141,7 +154,7 @@ JsVar *jsnCallFunction(void *function, JsnArgumentType argumentSpecifier, JsVar 
       doubleData[doubleCount++] = f;
 #else
       uint64_t i = *(uint64_t*)&f;
-#if USE_64BIT
+#ifdef USE_64BIT
       argData[argCount++] = (size_t)i;
 #else // 32 bit...
  #ifdef USE_ARG_REORDERING
@@ -252,6 +265,7 @@ JsVar *jsnCallFunction(void *function, JsnArgumentType argumentSpecifier, JsVar 
     assert(0);
     return 0;
   }
+#endif // USE_CALLFUNCTION_HACK
 }
 
 // -----------------------------------------------------------------------------------------
@@ -264,6 +278,9 @@ int32_t sanity_int_flt_int(int32_t a, JsVarFloat b, int32_t c) {
 
 /** Perform sanity tests to ensure that  jsnCallFunction is working as expected */
 void jsnSanityTest() {
+  if (sizeof(JsVarFlags)!=2)
+    jsiConsolePrintf("WARNING: jsnative.c sanity check failed (sizeof(JsVarFlags)==2) %d\n", sizeof(JsVarFlags));
+
   if (sizeof(JsnArgumentType)!=2)
     jsiConsolePrintf("WARNING: jsnative.c sanity check failed (sizeof(JsnArgumentType)==2) %d\n", sizeof(JsnArgumentType));
 
@@ -275,12 +292,15 @@ void jsnSanityTest() {
   if (jsvGetIntegerAndUnLock(jsnCallFunction(sanity_int_pass, JSWAT_INT32|(JSWAT_INT32<<JSWAT_BITS), 0, args, 1)) != 12345)
       jsiConsolePrint("WARNING: jsnative.c sanity check failed (simple integer passing)\n");
   jsvUnLock(args[0]);
-
+#ifndef USE_CALLFUNCTION_HACK
+  // if we use CALLFUNCTION_HACK then we'll only handle functions
+  // that are in jswrapper.c - this probably won't be there
   args[0] = jsvNewFromInteger(56);
   args[1] = jsvNewFromFloat(34);
   args[2] = jsvNewFromInteger(12);
   if (jsvGetIntegerAndUnLock(jsnCallFunction(sanity_int_flt_int, JSWAT_INT32|(JSWAT_INT32<<(JSWAT_BITS*1))|(JSWAT_JSVARFLOAT<<(JSWAT_BITS*2))|(JSWAT_INT32<<(JSWAT_BITS*3)), 0, args, 3)) != 123456)
       jsiConsolePrint("WARNING: jsnative.c sanity check failed (int-float-int passing)\n");
   jsvUnLockMany(3, args);
+#endif
 }
 

@@ -46,6 +46,7 @@
 #ifdef USE_APP_CONFIG
 #include "app_config.h"
 #endif
+
 // <h> Board Support
 
 //==========================================================
@@ -1284,7 +1285,7 @@
 
 // <o> RNG_CONFIG_POOL_SIZE - Pool size
 #ifndef RNG_CONFIG_POOL_SIZE
-#define RNG_CONFIG_POOL_SIZE 64
+#define RNG_CONFIG_POOL_SIZE 32
 #endif
 
 // <o> RNG_CONFIG_IRQ_PRIORITY  - Interrupt priority
@@ -5538,7 +5539,7 @@
 // <e> NFC_T2T_HAL_ENABLED - nfc_t2t_hal - Hardware Abstraction Layer for NFC library.
 //==========================================================
 #ifndef NFC_T2T_HAL_ENABLED
-#define NFC_T2T_HAL_ENABLED 0
+#define NFC_T2T_HAL_ENABLED 1
 #endif
 // <o> NFCT_CONFIG_IRQ_PRIORITY  - Interrupt priority
 

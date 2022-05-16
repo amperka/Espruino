@@ -16,13 +16,13 @@
 import pinutils;
 
 info = {
- 'name' : "PuckJS",
+ 'name' : "Puck.js",
  'link' :  [ "http://www.espruino.com/PuckJS" ],
  'default_console' : "EV_SERIAL1",
  'default_console_tx' : "D28",
  'default_console_rx' : "D29",
  'default_console_baudrate' : "9600",
- 'variables' : 2250, # How many variables are allocated for Espruino to use. RAM will be overflowed if this number is too high and code won't compile.
+ 'variables' : 2756, # How many variables are allocated for Espruino to use. RAM will be overflowed if this number is too high and code won't compile.
  'bootloader' : 1,
  'binary_name' : 'espruino_%v_puckjs.hex',
  'build' : {
@@ -31,19 +31,26 @@ info = {
      'BLUETOOTH',
      'NET',
      'GRAPHICS',
-     'CRYPTO',
+     'CRYPTO','SHA256',#'SHA512',
+     'AES',
      'NFC',
-     'NEOPIXEL'
-     #'HASHLIB'
+     'NEOPIXEL',
      #'FILESYSTEM'
      #'TLS'
    ],
    'makefile' : [
      'DEFINES+=-DHAL_NFC_ENGINEERING_BC_FTPAN_WORKAROUND=1', # Looks like proper production nRF52s had this issue
-     'DEFINES+=-DCONFIG_GPIO_AS_PINRESET', # Allow the reset pin to work
+     # 'DEFINES+=-DCONFIG_GPIO_AS_PINRESET', # reset isn't being used, so let's just have an extra IO (needed for Puck.js V2)
+     'DEFINES+=-DESPR_DCDC_ENABLE', # Ensure DCDC converter is enabled
+     'DEFINES += -DNEOPIXEL_SCK_PIN=22 -DNEOPIXEL_LRCK_PIN=16', # SCK pin needs defining as something unused for neopixel (HW errata means they can't be disabled) see https://github.com/espruino/Espruino/issues/2071
+     'DEFINES+=-DNRF_BLE_GATT_MAX_MTU_SIZE=53 -DNRF_BLE_MAX_MTU_SIZE=53', # increase MTU from default of 23
+     'LDFLAGS += -Xlinker --defsym=LD_APP_RAM_BASE=0x2c40', # set RAM base to match MTU
      'DEFINES+=-DBLUETOOTH_NAME_PREFIX=\'"Puck.js"\'',
+     'DEFINES+=-DCUSTOM_GETBATTERY=jswrap_puck_getBattery',
+     'DEFINES+=-DNFC_DEFAULT_URL=\'"https://puck-js.com/go"\'',
+     'DEFINES+=-DAPP_TIMER_OP_QUEUE_SIZE=3', # Puck.js magnetometer poll
      'DFU_PRIVATE_KEY=targets/nrf5x_dfu/dfu_private_key.pem',
-     'DFU_SETTINGS=--application-version 0xff --hw-version 52 --sd-req 0x8C',
+     'DFU_SETTINGS=--application-version 0xff --hw-version 52 --sd-req 0x8C,0x91',
      'INCLUDE += -I$(ROOT)/libs/puckjs',
      'WRAPPERSOURCES += libs/puckjs/jswrap_puck.c'
    ]
@@ -58,8 +65,8 @@ chip = {
   'flash' : 512,
   'speed' : 64,
   'usart' : 1,
-  'spi' : 3,
-  'i2c' : 2,
+  'spi' : 1,
+  'i2c' : 1,
   'adc' : 1,
   'dac' : 0,
   'saved_code' : {
@@ -74,14 +81,35 @@ devices = {
   'LED1' : { 'pin' : 'D5' },
   'LED2' : { 'pin' : 'D4' },
   'LED3' : { 'pin' : 'D3' },
-  'IR'   : { 'pin_anode' : 'D25', 'pin_cathode' : 'D26' },
+  'IR'   : { 'pin_anode' : 'D25',   # on v2 this just goes to a FET
+             'pin_cathode' : 'D26'  # on v2 this is the powered output named 'FET'
+           },
   'BTN1' : { 'pin' : 'D0', 'pinstate' : 'IN_PULLDOWN' },
   'CAPSENSE' : { 'pin_rx' : 'D11', 'pin_tx' : 'D12' },
   'NFC': { 'pin_a':'D9', 'pin_b':'D10' },
-  'MAG': { 'pin_pwr':'D18',
+  #'MAG': { 'device': 'MAG3110', 'addr' : 0x0E, # v1.0
+  #         'pin_pwr':'D18',
+  #         'pin_int':'D17',
+  #         'pin_sda':'D20',
+  #         'pin_scl':'D19' }
+  # V2.0
+  'MAG': { 'device': 'LIS3MDL', 'addr' : 30, # v2.0
+           'pin_pwr':'D18',
            'pin_int':'D17',
            'pin_sda':'D20',
-           'pin_scl':'D19' }
+           'pin_scl':'D19',
+           'pin_drdy':'D21',
+           },
+  'ACCEL': { 'device': 'LSM6DS3TR', 'addr' : 106, # v2.0
+#           'pin_pwr':'D16', # can't actually power this from an IO pin due to undocumented, massive power draw on startup
+           'pin_int':'D13',
+           'pin_sda':'D14',
+           'pin_scl':'D15' },
+  'TEMP': { 'device': 'PCT2075TP', 'addr' : 78, # v2.0
+           'pin_pwr':'D8',
+           'pin_sda':'D7',
+           'pin_scl':'D6' }
+
   # Pin D22 is used for clock when driving neopixels - as not specifying a pin seems to break things
 };
 
@@ -94,6 +122,8 @@ board = {
   '_notes' : {
     'D11' : "Capacitive sense. D12 is connected to this pin via a 1 MOhm resistor",
     'D28' : "If pulled up to 1 on startup, D28 and D29 become Serial1",
+    'D22' : "This is used as SCK when driving Neopixels, and will output a signal when 'require('neopixel').write' is called",
+    'D16' : "This is used as LRCK when driving Neopixels, and will output a signal when 'require('neopixel').write' is called"
   }
 };
 

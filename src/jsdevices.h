@@ -41,15 +41,19 @@ typedef enum {
   EV_LOOPBACKA = EV_SERIAL_START,
   EV_LOOPBACKB,
   EV_LIMBO,     ///< Where console output goes right after boot - one sec later we move it to USB/Serial
-  EV_USBSERIAL, ///< USB CDC Serial Data
-#ifdef BLUETOOTH
-  EV_BLUETOOTH, ///< Bluetooth LE
-#endif
 #ifdef USE_TELNET
   EV_TELNET,
 #endif
 #ifdef USE_TERMINAL
   EV_TERMINAL, // Built-in VT100 terminal
+#endif
+  EV_SERIAL_DEVICE_STATE_START, // The point at which we start storing device state (jshSerialDevice*)
+  _EV_SERIAL_DEVICE_STATE_START_MINUS_ONE=EV_SERIAL_DEVICE_STATE_START-1, // means that the next enum should==EV_SERIAL_DEVICE_STATE_START
+#ifdef USB
+  EV_USBSERIAL, ///< USB CDC Serial Data
+#endif
+#ifdef BLUETOOTH
+  EV_BLUETOOTH, ///< Bluetooth LE
 #endif
 #if USART_COUNT>=1
   EV_SERIAL1, // Used for IO for UARTS
@@ -73,6 +77,9 @@ typedef enum {
   EV_SERIAL_MAX = EV_SERIAL1 + USART_COUNT - 1,
   EV_SERIAL1_STATUS, // Used to store serial status info
   EV_SERIAL_STATUS_MAX = EV_SERIAL1_STATUS + USART_COUNT - 1,
+#else
+  _EV_SERIAL_MAX_PLUS_ONE,
+  EV_SERIAL_MAX = _EV_SERIAL_MAX_PLUS_ONE-1,
 #endif
 #ifdef BLUETOOTH
   EV_BLUETOOTH_PENDING,      // Tasks that came from the Bluetooth Stack in an IRQ
@@ -119,9 +126,17 @@ typedef enum {
 
 #define DEVICE_SANITY_CHECK() if (EV_TYPE_MASK>63) jsError("DEVICE_SANITY_CHECK failed")
 
-// Return true if the device is a USART
+
+/// True is the device is a serial device (could be a USART, Bluetooth, USB, etc)
+#define DEVICE_IS_SERIAL(X) (((X)>=EV_SERIAL_START) && ((X)<=EV_SERIAL_MAX))
+/// True if the device has device state stored for it (eg. flow control state)
+#define DEVICE_HAS_DEVICE_STATE(X) (((X)>=EV_SERIAL_DEVICE_STATE_START) && ((X)<=EV_SERIAL_MAX))
+/// If DEVICE_HAS_DEVICE_STATE, this is the index where device state is stored
+#define TO_SERIAL_DEVICE_STATE(X) ((X)-EV_SERIAL_DEVICE_STATE_START)
+
 #if USART_COUNT>=1
-#define DEVICE_IS_USART(X) (((X)>=EV_SERIAL_START) && ((X)<=EV_SERIAL_MAX))
+/// Return true if the device is a USART (hardware serial)
+#define DEVICE_IS_USART(X) (((X)>=EV_SERIAL1) && ((X)<=EV_SERIAL_MAX))
 #define DEVICE_IS_USART_STATUS(X) (((X)>=EV_SERIAL1_STATUS) && ((X)<=EV_SERIAL_STATUS_MAX))
 #else
 #define DEVICE_IS_USART(X) (false)
@@ -141,8 +156,10 @@ typedef enum {
 #endif
 #define DEVICE_IS_EXTI(X) (((X)>=EV_EXTI0) && ((X)<=EV_EXTI_MAX))
 
+#if USART_COUNT>=1
 #define IOEVENTFLAGS_SERIAL_TO_SERIAL_STATUS(X) ((X) + EV_SERIAL1_STATUS - EV_SERIAL1)
 #define IOEVENTFLAGS_SERIAL_STATUS_TO_SERIAL(X) ((X) + EV_SERIAL1 - EV_SERIAL1_STATUS)
+#endif
 
 #define IOEVENTFLAGS_GETTYPE(X) ((X)&EV_TYPE_MASK)
 #define IOEVENTFLAGS_GETCHARS(X) ((((X)&EV_CHARS_MASK)>>EV_CHARS_SHIFT)+1)
@@ -214,6 +231,9 @@ int jshGetCharToTransmit(IOEventFlags device);
 
 /// Set whether the host should transmit or not
 void jshSetFlowControlXON(IOEventFlags device, bool hostShouldTransmit);
+
+/// To be called on idle when the input queue has enough space
+void jshSetFlowControlAllReady();
 
 /// Set whether to use flow control on the given device or not. Whether to use software, and if hardware, the pin to use for RTS
 void jshSetFlowControlEnabled(IOEventFlags device, bool software, unsigned char/*Pin*/ pinCTS);

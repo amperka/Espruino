@@ -21,11 +21,13 @@
 
 JsVarInt jswrap_integer_valueOf(JsVar *v);
 JsVarFloat jswrap_math_abs(JsVarFloat x);
+JsVarFloat jswrap_math_asin(JsVarFloat x);
 double jswrap_math_mod(double x, double y);
 double jswrap_math_pow(double x, double y);
 JsVar *jswrap_math_round(double x);
 double jswrap_math_sqrt(double x);
 double jswrap_math_sin(double x);
 double jswrap_math_atan(double x);
+double jswrap_math_atan2(double y, double x);
 JsVarFloat jswrap_math_clip(JsVarFloat x, JsVarFloat min, JsVarFloat max);
 JsVarFloat jswrap_math_minmax(JsVar *args, bool isMax);

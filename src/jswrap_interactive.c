@@ -16,6 +16,7 @@
 #include "jswrap_interactive.h"
 #include "jswrap_json.h" // for print/console.log
 #include "jswrap_flash.h" // for jsfRemoveCodeFromFlash
+#include "jstimer.h" // for jstSystemTimeChanged
 #include "jsvar.h"
 #include "jsflags.h"
 #include "jsinteractive.h"
@@ -88,13 +89,13 @@ void jswrap_interface_setSleepIndicator(JsVar *pinVar) {
 /*JSON{
   "type" : "function",
   "name" : "setDeepSleep",
-  "#if" : "defined(EFM32) || defined(STM32)",
+  "#if" : "defined(STM32) || defined(EFM32)",
   "generate" : "jswrap_interface_setDeepSleep",
   "params" : [
     ["sleep","bool",""]
   ]
 }
-Set whether we can enter deep sleep mode, which reduces power consumption to around 100uA. This only works on STM32 Espruino Boards.
+Set whether we can enter deep sleep mode, which reduces power consumption to around 100uA. This only works on STM32 Espruino Boards (nRF52 boards sleep automatically).
 
 Please see http://www.espruino.com/Power+Consumption for more details on this.
  */
@@ -138,12 +139,17 @@ void jswrap_interface_trace(JsVar *root) {
 }
 Output current interpreter state in a text form such that it can be copied to a new device
 
-Note: 'Internal' functions are currently not handled correctly. You will need to recreate these in the `onInit` function.
+Espruino keeps its current state in RAM (even if the function code is stored in Flash). When you type `dump()` it dumps the current state of code in RAM plus the hardware state, then if there's code saved in flash it writes "// Code saved with E.setBootCode" and dumps that too.
+
+**Note:** 'Internal' functions are currently not handled correctly. You will need to recreate these in the `onInit` function.
  */
 /*JSON{
   "type" : "function",
   "name" : "load",
-  "generate_full" : "jsiStatus|=JSIS_TODO_FLASH_LOAD;"
+  "generate" : "jswrap_interface_load",
+  "params" : [
+    ["filename","JsVar","optional: The name of a text JS file to load from Storage after reset"]
+  ]
 }
 Restart and load the program out of flash - this has an effect similar to
 completely rebooting Espruino (power off/power on), but without actually
@@ -158,28 +164,44 @@ If you want code to be executed right after loading (for instance to initialise
 devices connected to Espruino), add an `init` event handler to `E` with
 `E.on('init', function() { ... your_code ... });`. This will then be automatically
 executed by Espruino every time it starts.
+
+**If you specify a filename in the argument then that file will be loaded
+from Storage after reset** in much the same way as calling `reset()` then `eval(require("Storage").read(filename))`
  */
+void jswrap_interface_load(JsVar *storageName) {
+  jsiStatus |= JSIS_TODO_FLASH_LOAD;
+  jsvObjectSetChild(execInfo.hiddenRoot,JSI_LOAD_CODE_NAME,storageName);
+}
+
+
 /*JSON{
   "type" : "function",
   "name" : "save",
-  "generate_full" : "jsiStatus|=JSIS_TODO_FLASH_SAVE;"
+  "generate_full" : "jsiStatus|=JSIS_TODO_FLASH_SAVE;",
+  "#if" : "!defined(BANGLEJS)"
 }
-Save program memory into flash. It will then be loaded automatically every time
-Espruino powers on or is hard-reset.
+Save the state of the interpreter into flash (including the results of calling
+`setWatch`, `setInterval`, `pinMode`, and any listeners). The state will then be loaded automatically
+ every time Espruino powers on or is hard-reset. To see what will get saved you can call `dump()`.
+
+**Note:** If you set up intervals/etc in `onInit()` and you have already called `onInit`
+before running `save()`, when Espruino resumes there will be two copies of your intervals -
+the ones from before the save, and the ones from after - which may cause you problems.
+
+For more information about this and other options for saving, please see
+the [Saving code on Espruino](https://www.espruino.com/Saving) page.
 
 This command only executes when the Interpreter returns to the Idle state - for
 instance ```a=1;save();a=2;``` will save 'a' as 2.
 
 When Espruino powers on, it will resume from where it was when you typed `save()`.
 If you want code to be executed right after loading (for instance to initialise
-devices connected to Espruino), add an `init` event handler to `E` with
-`E.on('init', function() { ... your_code ... });`. This will then be automatically
-executed by Espruino every time it starts.
+devices connected to Espruino), add a function called `onInit`, or add a `init`
+event handler to `E` with `E.on('init', function() { ... your_code ... });`.
+This will then be automatically executed by Espruino every time it starts.
 
 In order to stop the program saved with this command being loaded automatically,
-hold down Button 1 while also pressing reset. On some boards, Button 1 enters
-bootloader mode, so you will need to press Reset with Button 1 raised, and then
-hold Button 1 down a fraction of a second later.
+check out [the Troubleshooting guide](https://www.espruino.com/Troubleshooting#espruino-stopped-working-after-i-typed-save-)
  */
 /*JSON{
   "type" : "function",
@@ -257,6 +279,7 @@ void jswrap_interface_print(JsVar *v) {
 /*JSON{
   "type" : "function",
   "name" : "edit",
+  "ifndef" : "SAVE_ON_FLASH",
   "generate" : "jswrap_interface_edit",
   "params" : [
     ["funcName","JsVar","The name of the function to edit (either a string or just the unquoted name)"]
@@ -293,7 +316,7 @@ void jswrap_interface_edit(JsVar *funcName) {
          * foo.replaceWith(function() { ... });
          *
          */
-        JsVar *funcData = jsvAsString(func, false);
+        JsVar *funcData = jsvAsString(func);
 
         if (normalDecl) {
           jsvAppendString(newLine, "function ");
@@ -328,7 +351,7 @@ void jswrap_interface_edit(JsVar *funcName) {
     ["echoOn","bool",""]
   ]
 }
-Should TinyJS echo what you type back to you? true = yes (Default), false = no. When echo is off, the result of executing a command is not returned. Instead, you must use 'print' to send output.
+Should Espruino echo what you type back to you? true = yes (Default), false = no. When echo is off, the result of executing a command is not returned. Instead, you must use 'print' to send output.
  */
 void jswrap_interface_echo(bool echoOn) {
   if (echoOn)
@@ -354,17 +377,31 @@ Return the current system time in Seconds (as a floating point number)
     ["time","float",""]
   ]
 }
-Set the current system time in seconds (to the nearest second).
+Set the current system time in seconds (`time` can be a floating
+point value).
 
 This is used with `getTime`, the time reported from `setWatch`, as
 well as when using `new Date()`.
 
+`Date.prototype.getTime()` reports the time in milliseconds, so
+you can set the time to a `Date` object using:
+
+```
+setTime((new Date("Tue, 19 Feb 2019 10:57")).getTime()/1000)
+```
+
 To set the timezone for all new Dates, use `E.setTimeZone(hours)`.
  */
 void jswrap_interactive_setTime(JsVarFloat time) {
+  jshInterruptOff();
   JsSysTime stime = jshGetTimeFromMilliseconds(time*1000);
   jsiLastIdleTime = stime;
+  JsSysTime oldtime = jshGetSystemTime();
+  // set system time
   jshSetSystemTime(stime);
+  // update any currently running timers so they don't get broken
+  jstSystemTimeChanged(stime - oldtime);
+  jshInterruptOn();
 }
 
 
@@ -398,7 +435,7 @@ JsVar *jswrap_interface_getSerial() {
   "generate" : "jswrap_interface_setInterval",
   "params" : [
     ["function","JsVar","A Function or String to be executed"],
-    ["timeout","float","The time between calls to the function"],
+    ["timeout","float","The time between calls to the function (max 3153600000000 = 100 years"],
     ["args","JsVarArray","Optional arguments to pass to the function when executed"]
   ],
   "return" : ["JsVar","An ID that can be passed to clearInterval"]
@@ -436,7 +473,7 @@ was returned by `setInterval` into the `clearInterval` function.
   "generate" : "jswrap_interface_setTimeout",
   "params" : [
     ["function","JsVar","A Function or String to be executed"],
-    ["timeout","float","The time until the function will be executed"],
+    ["timeout","float","The time until the function will be executed (max 3153600000000 = 100 years"],
     ["args","JsVarArray","Optional arguments to pass to the function when executed"]
   ],
   "return" : ["JsVar","An ID that can be passed to clearTimeout"]
@@ -464,33 +501,36 @@ setTimeout(function (a,b) {
 ```
 
 If you want to stop the function from being called, pass the number that
-was returned by `setTimeout` into the `clearInterval` function.
+was returned by `setTimeout` into the `clearTimeout` function.
 
  **Note:** If `setDeepSleep(true)` has been called and the interval is greater than 5 seconds, Espruino may execute the interval up to 1 second late. This is because Espruino can only wake from deep sleep every second - and waking early would cause Espruino to waste power while it waited for the correct time.
  */
 JsVar *_jswrap_interface_setTimeoutOrInterval(JsVar *func, JsVarFloat interval, JsVar *args, bool isTimeout) {
   // NOTE: The 5 sec delay mentioned in the description is handled by jshSleep
-  JsVar *itemIndex = 0;
   if (!jsvIsFunction(func) && !jsvIsString(func)) {
     jsExceptionHere(JSET_ERROR, "Function or String not supplied!");
-  } else {
-    // Create a new timer
-    JsVar *timerPtr = jsvNewObject();
-    if (isnan(interval) || interval<TIMER_MIN_INTERVAL) interval=TIMER_MIN_INTERVAL;
-    JsSysTime intervalInt = jshGetTimeFromMilliseconds(interval);
-    jsvObjectSetChildAndUnLock(timerPtr, "time", jsvNewFromLongInteger((jshGetSystemTime() - jsiLastIdleTime) + intervalInt));
-    if (!isTimeout) {
-      jsvObjectSetChildAndUnLock(timerPtr, "interval", jsvNewFromLongInteger(intervalInt));
-    }
-    jsvObjectSetChild(timerPtr, "callback", func); // intentionally no unlock
-    if (jsvGetArrayLength(args))
-      jsvObjectSetChild(timerPtr, "args", args); // intentionally no unlock
-
-    // Add to array
-    itemIndex = jsvNewFromInteger(jsiTimerAdd(timerPtr));
-    jsvUnLock(timerPtr);
-    jsiTimersChanged(); // mark timers as changed
+    return 0;
   }
+  if (isnan(interval) || interval<TIMER_MIN_INTERVAL) interval=TIMER_MIN_INTERVAL;
+  if (interval>TIMER_MAX_INTERVAL) {
+    jsExceptionHere(JSET_ERROR, "Interval is too long (>100 years)");
+    return 0;
+  }
+  // Create a new timer
+  JsVar *timerPtr = jsvNewObject();
+  JsSysTime intervalInt = jshGetTimeFromMilliseconds(interval);
+  jsvObjectSetChildAndUnLock(timerPtr, "time", jsvNewFromLongInteger((jshGetSystemTime() - jsiLastIdleTime) + intervalInt));
+  if (!isTimeout) {
+    jsvObjectSetChildAndUnLock(timerPtr, "interval", jsvNewFromLongInteger(intervalInt));
+  }
+  jsvObjectSetChild(timerPtr, "callback", func); // intentionally no unlock
+  if (jsvGetArrayLength(args))
+    jsvObjectSetChild(timerPtr, "args", args); // intentionally no unlock
+
+  // Add to array
+  JsVar *itemIndex = jsvNewFromInteger(jsiTimerAdd(timerPtr));
+  jsvUnLock(timerPtr);
+  jsiTimersChanged(); // mark timers as changed
   return itemIndex;
 }
 JsVar *jswrap_interface_setInterval(JsVar *func, JsVarFloat timeout, JsVar *args) {
@@ -505,36 +545,40 @@ JsVar *jswrap_interface_setTimeout(JsVar *func, JsVarFloat timeout, JsVar *args)
   "name" : "clearInterval",
   "generate" : "jswrap_interface_clearInterval",
   "params" : [
-    ["id","JsVar","The id returned by a previous call to setInterval"]
+    ["id","JsVarArray","The id returned by a previous call to setInterval"]
   ]
 }
-Clear the Interval that was created with setInterval, for example:
+Clear the Interval that was created with `setInterval`, for example:
 
 ```var id = setInterval(function () { print('foo'); }, 1000);```
 
 ```clearInterval(id);```
 
-If no argument is supplied, all timers and intervals are stopped
+If no argument is supplied, all timeouts and intervals are stopped.
+
+To avoid accidentally deleting all Intervals, if a parameter is supplied but is `undefined` then an Exception will be thrown.
  */
 /*JSON{
   "type" : "function",
   "name" : "clearTimeout",
   "generate" : "jswrap_interface_clearTimeout",
   "params" : [
-    ["id","JsVar","The id returned by a previous call to setTimeout"]
+    ["id","JsVarArray","The id returned by a previous call to setTimeout"]
   ]
 }
-Clear the Timeout that was created with setTimeout, for example:
+Clear the Timeout that was created with `setTimeout`, for example:
 
 ```var id = setTimeout(function () { print('foo'); }, 1000);```
 
 ```clearTimeout(id);```
 
-If no argument is supplied, all timers and intervals are stopped
+If no argument is supplied, all timeouts and intervals are stopped.
+
+To avoid accidentally deleting all Timeouts, if a parameter is supplied but is `undefined` then an Exception will be thrown.
  */
-void _jswrap_interface_clearTimeoutOrInterval(JsVar *idVar, bool isTimeout) {
+void _jswrap_interface_clearTimeoutOrInterval(JsVar *idVarArr, bool isTimeout) {
   JsVar *timerArrayPtr = jsvLock(timerArray);
-  if (jsvIsUndefined(idVar)) {
+  if (jsvIsUndefined(idVarArr) || jsvGetArrayLength(idVarArr)==0) {
     /* Delete all timers EXCEPT those with a 'watch' field,
      as those were generated by jsinteractive.c for debouncing watches */
     JsvObjectIterator it;
@@ -550,26 +594,27 @@ void _jswrap_interface_clearTimeoutOrInterval(JsVar *idVar, bool isTimeout) {
     }
     jsvObjectIteratorFree(&it);
   } else {
-    JsVar *child = jsvIsBasic(idVar) ? jsvFindChildFromVar(timerArrayPtr, idVar, false) : 0;
-    if (child) {
-      JsVar *timerArrayPtr = jsvLock(timerArray);
-      jsvRemoveChild(timerArrayPtr, child);
-      jsvUnLock2(child, timerArrayPtr);
+    JsVar *idVar = jsvGetArrayItem(idVarArr, 0);
+    if (jsvIsUndefined(idVar)) {
+      const char *name = isTimeout?"Timeout":"Interval";
+      jsExceptionHere(JSET_ERROR, "clear%s(undefined) not allowed. Use clear%s() instead.", name, name);
     } else {
-      if (isTimeout)
-        jsExceptionHere(JSET_ERROR, "Unknown Timeout");
-      else
-        jsExceptionHere(JSET_ERROR, "Unknown Interval");
+      JsVar *child = jsvIsBasic(idVar) ? jsvFindChildFromVar(timerArrayPtr, idVar, false) : 0;
+      if (child) {
+        jsvRemoveChild(timerArrayPtr, child);
+        jsvUnLock(child);
+      }
+      jsvUnLock(idVar);
     }
   }
   jsvUnLock(timerArrayPtr);
   jsiTimersChanged(); // mark timers as changed
 }
-void jswrap_interface_clearInterval(JsVar *idVar) {
-  _jswrap_interface_clearTimeoutOrInterval(idVar, false);
+void jswrap_interface_clearInterval(JsVar *idVarArr) {
+  _jswrap_interface_clearTimeoutOrInterval(idVarArr, false);
 }
-void jswrap_interface_clearTimeout(JsVar *idVar) {
-  _jswrap_interface_clearTimeoutOrInterval(idVar, true);
+void jswrap_interface_clearTimeout(JsVar *idVarArr) {
+  _jswrap_interface_clearTimeoutOrInterval(idVarArr, true);
 }
 
 /*JSON{
@@ -581,7 +626,7 @@ void jswrap_interface_clearTimeout(JsVar *idVar) {
     ["time","float","The new time period in ms"]
   ]
 }
-Change the Interval on a callback created with setInterval, for example:
+Change the Interval on a callback created with `setInterval`, for example:
 
 ```var id = setInterval(function () { print('foo'); }, 1000); // every second```
 
@@ -597,12 +642,10 @@ void jswrap_interface_changeInterval(JsVar *idVar, JsVarFloat interval) {
   JsVar *timerName = jsvIsBasic(idVar) ? jsvFindChildFromVar(timerArrayPtr, idVar, false) : 0;
   if (timerName) {
     JsVar *timer = jsvSkipNameAndUnLock(timerName);
-    JsVar *v;
-    JsVarInt intervalInt = (JsVarInt)jshGetTimeFromMilliseconds(interval);
-    v = jsvNewFromInteger(intervalInt);
-    jsvUnLock2(jsvSetNamedChild(timer, v, "interval"), v);
-    v = jsvNewFromInteger((JsVarInt)(jshGetSystemTime()-jsiLastIdleTime) + intervalInt);
-    jsvUnLock3(jsvSetNamedChild(timer, v, "time"), v, timer);
+    JsSysTime intervalInt = jshGetTimeFromMilliseconds(interval);
+    jsvObjectSetChildAndUnLock(timer, "interval", jsvNewFromLongInteger(intervalInt));
+    jsvObjectSetChildAndUnLock(timer, "time", jsvNewFromLongInteger((jshGetSystemTime()-jsiLastIdleTime) + intervalInt));
+    jsvUnLock(timer);
     // timerName already unlocked
     jsiTimersChanged(); // mark timers as changed
   } else {

@@ -82,7 +82,7 @@ port 23 on the ESP8266 and port 2323 on Linux.
   "name"     : "setOptions",
   "generate" : "jswrap_telnet_setOptions",
   "params": [
-    [ "options", "JsVar", "Options controlling the telnet console server" ]
+    [ "options", "JsVar", "Options controlling the telnet console server `{ mode : 'on|off'}`" ]
   ]
 }
 */
@@ -286,8 +286,9 @@ void telnetSendChar(char ch) {
 bool telnetRecv(JsNetwork *net) {
   if (tnSrv.sock == 0 || tnSrv.cliSock == 0) return false;
 
-  char buff[256];
-  int r = netRecv(net, ST_NORMAL, tnSrv.cliSock-1, buff, 256);
+  char buff[64];
+  if (!jshHasEventSpaceForChars(sizeof(buff))) return false;
+  int r = netRecv(net, ST_NORMAL, tnSrv.cliSock-1, buff, sizeof(buff));
   if (r > 0) {
     jshPushIOCharEvents(EV_TELNET, buff, (unsigned int)r);
   } else if (r < 0) {

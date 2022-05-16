@@ -16,11 +16,9 @@ make clean && make
 * ```RELEASE=1``` for performance and code size, without it, assertions are kept for debugging.
 * ```DEBUG=1``` is available.
 
-## Under Linux
+## Under Linux (recommended)
 
 Espruino is easy to build under Linux, for either for Espruino running on Linux or a board.
-
-The current reference OS for building is Ubuntu 16.04.1 LTS, and the following can ensure problem free development:
 
 ### Easy Method : provision.sh
 
@@ -35,7 +33,10 @@ This should work for common platforms on Linux, but will only set
 paths up for your current session. You'll have to run it again
 next time you log in.
 
-### for Espruino
+### Manual Method
+
+#### For Espruino
+
 
 ```bash
 sudo apt-get update
@@ -51,7 +52,7 @@ make clean && make
 chmod +x espruino && sudo cp espruino /usr/local/bin
 ```
 
-### for an example of cross compilation for Puck.js
+#### for cross compilation to Puck.js
 
 Having successfully created an native OS Espruino, try a cross compilation.
 
@@ -62,7 +63,7 @@ sudo apt-get install -y \
   lib32z1 lib32ncurses5
 wget https://launchpad.net/gcc-arm-embedded/5.0/5-2016-q3-update/+download/gcc-arm-none-eabi-5_4-2016q3-20160926-linux.tar.bz2
 tar xjf gcc-arm-none-eabi-5_4-2016q3-20160926-linux.tar.bz2
-sudo mv gcc-arm-none-eabi-5_4-2016q3-20160926 /usr/local
+sudo mv gcc-arm-none-eabi-5_4-2016q3 /usr/local
 export PATH=/usr/local/gcc-arm-none-eabi-5_4-2016q3/bin:$PATH
 cd ~/source/repos/github/espruino/Espruino
 make clean && DFU_UPDATE_BUILD=1 BOARD=PUCKJS RELEASE=1 make
@@ -214,16 +215,19 @@ Dependant on the board, either usb or bluetooth can be used to program the board
 * USB
   * the board appears as a drive to drop a hex on
 
-#### for [Puck.js](http://www.espruino.com/Puck.js)
+#### for [Puck.js](http://www.espruino.com/Puck.js) and [Pixl.js](http://www.espruino.com/Pixl.js)
 
-The Puck.js is based on the nRF52
+The Puck.js and Pixl.js are based on the nRF52
 
 ```bash
+# Puck.js
 make clean && DFU_UPDATE_BUILD=1 BOARD=PUCKJS RELEASE=1 make
+# Pixl.js
+make clean && DFU_UPDATE_BUILD=1 BOARD=PIXLJS RELEASE=1 make
 ```
 
-The resulting file is a zip that has to be transferred to the puck.js via a Bluetooth low energy device.
-See <https://www.espruino.com/Puck.js+Quick+Start> for information concerning transferring the zip to the puck.js.
+The resulting file is a zip that has to be transferred via Bluetooth Low Energy.
+See the [Puck.js](http://www.espruino.com/Puck.js#firmware-updates) and [Pixl.js](http://www.espruino.com/Pixl.js#firmware-updates) pages for information concerning transferring the ZIP.
 
 #### for [NRF52-DK](https://www.nordicsemi.com/eng/Products/Bluetooth-low-energy/nRF52-DK)
 
@@ -259,13 +263,13 @@ make clean && BOARD=NRF51822DK RELEASE=1 make
 In order to compile for the esp8266 on Linux several pre-requisites have to be installed:
 
 * the esp-open-sdk from <https://github.com/pfalcon/esp-open-sdk>, use make STANDALONE=n
-* the Espressif SDK (version 1.5.0 with lwip patch as of this writing) from <http://bbs.espressif.com/viewforum.php?f=46> and <http://bbs.espressif.com/viewtopic.php?f=7&t=1528>
+* the Espressif NONOS SDK (version 2.2.1) from <https://github.com/espruino/EspruinoBuildTools/blob/master/esp8266/ESP8266_NONOS_SDK-2.2.1.tgz>
 
 To run make you need to pass a couple of environment variables to `make`.  These include:
 
 * `BOARD=ESP8266_BOARD`
 * `FLASH_4MB=1` if you have an esp-12
-* `ESP8266_SDK_ROOT=<Path to the 1.4 SDK>`
+* `ESP8266_SDK_ROOT=<Path to the 2.21 SDK>`
 * `PATH=<Path to esp-open-sdk/xtensa-lx106-elf/bin/>`
 * `COMPORT=</dev/ttyUSB0|COM1|...>`
 
@@ -276,8 +280,8 @@ The easiest is to place the following lines into a script, adapt it to your need
 #! /bin/bash
 export BOARD=ESP8266_BOARD
 export FLASH_4MB=1
-export ESP8266_SDK_ROOT=/esp8266/esp_iot_sdk_v1.5.0
-export PATH=$PATH:/esp8266/esp-open-sdk/xtensa-lx106-elf/bin/
+export ESP8266_SDK_ROOT=/esp8266/sdk/ESP8266_NONOS_SDK-2.2.1
+export PATH=$PATH:/esp8266/gcc/xtensa-lx106-elf/bin/
 export COMPORT=/dev/ttyUSB0
 make clean && make $*
 
@@ -286,7 +290,7 @@ make clean && make $*
 * If you do `make flash` it will try to flash your esp8266 module over serial
 * If you do `make wiflash` it will try to flash you esp8266 module over wifi, which assumes
   that it's already running Espruino
-* You will also get an `espruino_1v00_*_esp8266.tgz` archive, which contains everything you
+* You will also get an `espruino_2v0x_*_esp8266.tgz` archive, which contains everything you
   need to flash a module (except for esptool.py), including a README_flash.txt
   
 ### for esp32
@@ -384,7 +388,7 @@ Note:
 * For your host OS (Windows or MacOS)
   * Download and install [VirtualBox](https://www.virtualbox.org/)
   * Download and install [Vagrant](https://www.vagrantup.com/downloads.html)
-  * Note: for MacOS, the two previous steps can be accomplished easily with [Homebrew Cask](http://caskroom.io)
+  * Note: for MacOS, the two previous steps can be accomplished easily with [Homebrew Cask](https://brew.sh)
     * `brew cask install virtualbox vagrant`
 * Clone this repository and navigate with the command prompt to the contents
 * Install the auto-network plugin

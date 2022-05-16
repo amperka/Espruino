@@ -16,6 +16,13 @@
 #include "jswrap_io.h"
 #include "jsvar.h"
 #include "jswrap_arraybuffer.h" // for jswrap_io_peek
+#include "jswrapper.h" // for JSWAT_VOID
+#include "jstimer.h" // for digitalPulse
+
+#ifdef ESP32
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#endif
 
 /*JSON{
   "type"          : "function",
@@ -174,8 +181,8 @@ Set the analog Value of a pin. It will be output using PWM.
 Objects can contain:
 
 * `freq` - pulse frequency in Hz, eg. ```analogWrite(A0,0.5,{ freq : 10 });``` - specifying a frequency will force PWM output, even if the pin has a DAC
-* `soft` - boolean, If true software PWM is used if available.
-* `forceSoft` - boolean, If true software PWM is used even
+* `soft` - boolean, If true software PWM is used if hardware is not available.
+* `forceSoft` - boolean, If true software PWM is used even if hardware PWM or a DAC is available
 
  **Note:** if you didn't call `pinMode` beforehand then this function will also reset pin's state to `"output"`
  */
@@ -212,21 +219,38 @@ eg. `digitalPulse(A0,1,5);` pulses A0 high for 5ms. `digitalPulse(A0,1,[5,2,4]);
 digitalPulse is for SHORT pulses that need to be very accurate. If you're doing anything over a few milliseconds, use setTimeout instead.
  */
 void jswrap_io_digitalPulse(Pin pin, bool value, JsVar *times) {
+  if (!jshIsPinValid(pin)) {
+    jsExceptionHere(JSET_ERROR, "Invalid pin!");
+    return;
+  }
+  // check for currently running timer tasks
+  UtilTimerTask task;
+  uint32_t timerOffset = jstGetUtilTimerOffset();
+  bool hasTimer = jstGetLastPinTimerTask(pin, &task);
+  if (!hasTimer) task.time = 0;
+  // now start either one or a series of pulses
   if (jsvIsNumeric(times)) {
-    JsVarFloat time = jsvGetFloat(times);
-    if (time<0 || isnan(time)) {
+    JsVarFloat pulseTime = jsvGetFloat(times);
+    if (pulseTime<0 || isnan(pulseTime)) {
       jsExceptionHere(JSET_ERROR, "Pulse Time given for digitalPulse is less than 0, or not a number");
-    } else {
-      jshPinPulse(pin, value, time);
-    }
+    } else if (pulseTime>0) {
+      if (!hasTimer) jshPinOutput(pin, value);
+      task.time += jshGetTimeFromMilliseconds(pulseTime);
+      jstPinOutputAtTime(task.time, &timerOffset, &pin, 1, !value);
+    } else jstUtilTimerWaitEmpty(); // time==0
   } else if (jsvIsIterable(times)) {
     // iterable, so output a square wave
+    if (!hasTimer) jshPinOutput(pin, value);
     JsvIterator it;
     jsvIteratorNew(&it, times, JSIF_EVERY_ARRAY_ELEMENT);
     while (jsvIteratorHasElement(&it)) {
-      JsVarFloat time = jsvIteratorGetFloatValue(&it);
-      if (time>=0 && !isnan(time))
-        jshPinPulse(pin, value, time);
+      JsVarFloat pulseTime = jsvIteratorGetFloatValue(&it);
+      if (!isnan(pulseTime)) {
+        if (pulseTime>0) {
+          task.time += jshGetTimeFromMilliseconds(pulseTime);
+          jstPinOutputAtTime(task.time, &timerOffset, &pin, 1, !value);
+	}
+      }
       value = !value;
       jsvIteratorNext(&it);
     }
@@ -487,7 +511,7 @@ void jswrap_io_shiftOutCallback(int val, void *data) {
   "params" : [
     ["pins","JsVar","A pin, or an array of pins to use"],
     ["options","JsVar","Options, for instance the clock (see below)"],
-    ["data","JsVar","The data to shift out"]
+    ["data","JsVar","The data to shift out (see `E.toUint8Array` for info on the forms this can take)"]
   ]
 }
 Shift an array of data out using the pins supplied *least significant bit first*,
@@ -581,7 +605,13 @@ void jswrap_io_shiftOut(JsVar *pins, JsVar *options, JsVar *data) {
     jshPinSetState(d.clk, JSHPINSTATE_GPIO_OUT);
 
   // Now run through the data, pushing it out
+#ifdef ESP32
+  vTaskSuspendAll();
+#endif
   jsvIterateCallback(data, jswrap_io_shiftOutCallback, &d);
+#ifdef ESP32
+  xTaskResumeAll();
+#endif
 }
 
 /*JSON{
@@ -604,10 +634,10 @@ If the `options` parameter is an object, it can contain the following informatio
    // Whether to keep producing callbacks, or remove the watch after the first callback
    repeat: true/false(default),
    // Trigger on the rising or falling edge of the signal. Can be a string, or 1='rising', -1='falling', 0='both'
-   edge:'rising'/'falling'/'both'(default),
+   edge:'rising'(default for built-in buttons)/'falling'/'both'(default for pins),
    // Use software-debouncing to stop multiple calls if a switch bounces
    // This is the time in milliseconds to wait for bounces to subside, or 0 to disable
-   debounce:10 (0 is default),
+   debounce:10 (0 is default for pins, 25 is default for built-in buttons),
    // Advanced: If the function supplied is a 'native' function (compiled or assembly)
    // setting irq:true will call that function in the interrupt itself
    irq : false(default)
@@ -638,6 +668,10 @@ When doing this, interrupts will happen on both edges and there will be no debou
 **Note:** The STM32 chip (used in the [Espruino Board](/EspruinoBoard) and [Pico](/Pico)) cannot
 watch two pins with the same number - eg `A0` and `B0`.
 
+**Note:** On nRF52 chips (used in Puck.js, Pixl.js, MDBT42Q) `setWatch` disables the GPIO
+output on that pin. In order to be able to write to the pin again you need to disable
+the watch with `clearWatch`.
+
  */
 JsVar *jswrap_interface_setWatch(
     JsVar *func,           //!< A callback function to be invoked when the pin state changes.
@@ -659,26 +693,34 @@ JsVar *jswrap_interface_setWatch(
   int edge = 0;
   bool isIRQ = false;
   Pin dataPin = PIN_UNDEFINED;
+  if (IS_PIN_A_BUTTON(pin)) {
+    edge = 1;
+    debounce = 25;
+  }
   if (jsvIsObject(repeatOrObject)) {
     JsVar *v;
-    repeat = jsvGetBoolAndUnLock(jsvObjectGetChild(repeatOrObject, "repeat", 0));
-    debounce = jsvGetFloatAndUnLock(jsvObjectGetChild(repeatOrObject, "debounce", 0));
+    v = jsvObjectGetChild(repeatOrObject, "repeat", 0);
+    if (v) repeat = jsvGetBoolAndUnLock(v);
+    v = jsvObjectGetChild(repeatOrObject, "debounce", 0);
+    if (v) debounce = jsvGetFloatAndUnLock(v);
     if (isnan(debounce) || debounce<0) debounce=0;
     v = jsvObjectGetChild(repeatOrObject, "edge", 0);
-    edge = -1000;
     if (jsvIsUndefined(v)) {
-      edge = 0;
+      // do nothing - use default
     } else if (jsvIsNumeric(v)) {
       JsVarInt i = jsvGetInteger(v);
       edge = (i>0)?1:((i<0)?-1:0);
-    } else if (jsvIsString(v)) {
-      if (jsvIsStringEqual(v, "rising")) edge=1;
-      else if (jsvIsStringEqual(v, "falling")) edge=-1;
-      else if (jsvIsStringEqual(v, "both")) edge=0;
+    } else {
+      edge = -1000; // force error unless checks below work
+      if (jsvIsString(v)) {
+        if (jsvIsStringEqual(v, "rising")) edge=1;
+        else if (jsvIsStringEqual(v, "falling")) edge=-1;
+        else if (jsvIsStringEqual(v, "both")) edge=0;
+      }
     }
     jsvUnLock(v);
     if (edge < -1 || edge > 1) {
-      jsExceptionHere(JSET_TYPEERROR, "'edge' in setWatch should be a string - either 'rising', 'falling' or 'both'");
+      jsExceptionHere(JSET_TYPEERROR, "'edge' in setWatch should be 1, -1, 0, 'rising', 'falling' or 'both'");
       return 0;
     }
     isIRQ = jsvGetBoolAndUnLock(jsvObjectGetChild(repeatOrObject, "irq", 0));
@@ -697,6 +739,7 @@ JsVar *jswrap_interface_setWatch(
       if (debounce>0) jsvObjectSetChildAndUnLock(watchPtr, "debounce", jsvNewFromInteger((JsVarInt)jshGetTimeFromMilliseconds(debounce)));
       if (edge) jsvObjectSetChildAndUnLock(watchPtr, "edge", jsvNewFromInteger(edge));
       jsvObjectSetChild(watchPtr, "callback", func); // no unlock intentionally
+      jsvObjectSetChildAndUnLock(watchPtr, "state", jsvNewFromBool(jshPinInput(pin)));
     }
 
     // If nothing already watching the pin, set up a watch
@@ -737,21 +780,24 @@ JsVar *jswrap_interface_setWatch(
   "name" : "clearWatch",
   "generate" : "jswrap_interface_clearWatch",
   "params" : [
-    ["id","JsVar","The id returned by a previous call to setWatch"]
+    ["id","JsVarArray","The id returned by a previous call to setWatch"]
   ]
 }
 Clear the Watch that was created with setWatch. If no parameter is supplied, all watches will be removed.
- */
-void jswrap_interface_clearWatch(JsVar *idVar) {
 
-  if (jsvIsUndefined(idVar)) {
+To avoid accidentally deleting all Watches, if a parameter is supplied but is `undefined` then an Exception will be thrown.
+ */
+void jswrap_interface_clearWatch(JsVar *idVarArr) {
+  if (jsvIsUndefined(idVarArr) || jsvGetArrayLength(idVarArr)==0) {
     JsVar *watchArrayPtr = jsvLock(watchArray);
     JsvObjectIterator it;
     jsvObjectIteratorNew(&it, watchArrayPtr);
     while (jsvObjectIteratorHasValue(&it)) {
       JsVar *watchPtr = jsvObjectIteratorGetValue(&it);
       JsVar *watchPin = jsvObjectGetChild(watchPtr, "pin", 0);
-      jshPinWatch(jshGetPinFromVar(watchPin), false);
+      Pin pin = jshGetPinFromVar(watchPin);
+      if (!jshGetPinShouldStayWatched(pin))
+        jshPinWatch(pin, false);
       jsvUnLock2(watchPin, watchPtr);
       jsvObjectIteratorNext(&it);
     }
@@ -760,6 +806,11 @@ void jswrap_interface_clearWatch(JsVar *idVar) {
     jsvRemoveAllChildren(watchArrayPtr);
     jsvUnLock(watchArrayPtr);
   } else {
+    JsVar *idVar = jsvGetArrayItem(idVarArr, 0);
+    if (jsvIsUndefined(idVar)) {
+      jsExceptionHere(JSET_ERROR, "clearWatch(undefined) not allowed. Use clearWatch() instead.");
+      return;
+    }
     JsVar *watchArrayPtr = jsvLock(watchArray);
     JsVar *watchNamePtr = jsvFindChildFromVar(watchArrayPtr, idVar, false);
     jsvUnLock(watchArrayPtr);
@@ -776,7 +827,26 @@ void jswrap_interface_clearWatch(JsVar *idVar) {
       if (!jsiIsWatchingPin(pin))
         jshPinWatch(pin, false); // 'unwatch' pin
     } else {
-      jsExceptionHere(JSET_ERROR, "Unknown Watch");
+      jsExceptionHere(JSET_ERROR, "Unknown Watch %v", idVar);
     }
+    jsvUnLock(idVar);
   }
+}
+
+/// function for internal use
+int jswrap_interface_setWatch_int(void(*callback)(), Pin pin, bool repeat, int edge) {
+  JsVar *fn = jsvNewNativeFunction(callback, JSWAT_VOID);
+  JsVar *options = jsvNewObject();
+  jsvObjectSetChildAndUnLock(options, "repeat", jsvNewFromBool(repeat));
+  jsvObjectSetChildAndUnLock(options, "edge", jsvNewFromInteger(edge));
+  int id = jsvGetIntegerAndUnLock(jswrap_interface_setWatch(fn, pin, options));
+  jsvUnLock2(fn, options);
+  return id;
+}
+/// function for internal use
+void jswrap_interface_clearWatch_int(int watchNumber) {
+  JsVar *id = jsvNewFromInteger(watchNumber);
+  JsVar *idArray = jsvNewArray(&id, 1);
+  jswrap_interface_clearWatch(idArray);
+  jsvUnLock2(id, idArray);
 }

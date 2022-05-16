@@ -198,7 +198,7 @@ Return an approximate battery percentage remaining based on
 a normal CR2032 battery (2.8 - 2.2v)
 */
 int jswrap_badge_getBatteryPercentage() {
-  JsVarFloat v = jswrap_nrf_bluetooth_getBattery();
+  JsVarFloat v = jswrap_ble_getBattery();
   int pc = (v-2.2)*100/0.6;
   if (pc>100) pc=100;
   if (pc<0) pc=0;
@@ -273,15 +273,12 @@ void jswrap_badge_init() {
   JsVar *graphics = jspNewObject(0, "Graphics");
   if (!graphics) return; // low memory
   JsGraphics gfx;
-  graphicsStructInit(&gfx);
+  graphicsStructInit(&gfx,128,64,1);
   gfx.data.type = JSGRAPHICSTYPE_ARRAYBUFFER;
   gfx.data.flags = JSGRAPHICSFLAGS_ARRAYBUFFER_VERTICAL_BYTE | JSGRAPHICSFLAGS_INVERT_X;
   gfx.graphicsVar = graphics;
-  gfx.data.width = 128;
-  gfx.data.height = 64;
-  gfx.data.bpp = 1;
   lcdInit_ArrayBuffer(&gfx);
-  graphicsSetVar(&gfx);
+  graphicsSetVarInitial(&gfx);
   jsvObjectSetChild(execInfo.root,"g",graphics);
   // Set initial image
   const unsigned int LCD_IMIT_IMG_OFFSET = 344;

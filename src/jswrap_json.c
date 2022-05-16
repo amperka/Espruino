@@ -14,6 +14,7 @@
  * ----------------------------------------------------------------------------
  */
 #include "jswrap_json.h"
+#include "jswrap_object.h"
 #include "jsparse.h"
 #include "jsinteractive.h"
 #include "jswrapper.h"
@@ -54,19 +55,21 @@ Convert the given object into a JSON string which can subsequently be parsed wit
  */
 JsVar *jswrap_json_stringify(JsVar *v, JsVar *replacer, JsVar *space) {
   NOT_USED(replacer);
-  JSONFlags flags = JSON_IGNORE_FUNCTIONS|JSON_NO_UNDEFINED|JSON_ARRAYBUFFER_AS_ARRAY;
+  JSONFlags flags = JSON_IGNORE_FUNCTIONS|JSON_NO_UNDEFINED|JSON_ARRAYBUFFER_AS_ARRAY|JSON_JSON_COMPATIBILE|JSON_ALLOW_TOJSON;
   JsVar *result = jsvNewFromEmptyString();
   if (result) {// could be out of memory
     char whitespace[11] = "";
     if (jsvIsUndefined(space) || jsvIsNull(space)) {
       // nothing
     } else if (jsvIsNumeric(space)) {
-      unsigned int s = (unsigned int)jsvGetInteger(space);
+      int s = (int)jsvGetInteger(space);
+      if (s<0) s=0;
       if (s>10) s=10;
       whitespace[s] = 0;
       while (s) whitespace[--s]=' ';
     } else {
-      jsvGetString(space, whitespace, sizeof(whitespace));
+      size_t l = jsvGetString(space, whitespace, sizeof(whitespace)-1);
+      whitespace[l]=0; // add trailing 0
     }
     if (strlen(whitespace)) flags |= JSON_ALL_NEWLINES|JSON_PRETTY;
     jsfGetJSONWhitespace(v, result, flags, whitespace);
@@ -77,38 +80,38 @@ JsVar *jswrap_json_stringify(JsVar *v, JsVar *replacer, JsVar *space) {
 
 JsVar *jswrap_json_parse_internal() {
   switch (lex->tk) {
-  case LEX_R_TRUE:  jslGetNextToken(lex); return jsvNewFromBool(true);
-  case LEX_R_FALSE: jslGetNextToken(lex); return jsvNewFromBool(false);
-  case LEX_R_NULL:  jslGetNextToken(lex); return jsvNewWithFlags(JSV_NULL);
+  case LEX_R_TRUE:  jslGetNextToken(); return jsvNewFromBool(true);
+  case LEX_R_FALSE: jslGetNextToken(); return jsvNewFromBool(false);
+  case LEX_R_NULL:  jslGetNextToken(); return jsvNewWithFlags(JSV_NULL);
   case '-': {
-    jslGetNextToken(lex);
+    jslGetNextToken();
     if (lex->tk!=LEX_INT && lex->tk!=LEX_FLOAT) return 0;
-    JsVar *v = jswrap_json_parse_internal(lex);
+    JsVar *v = jswrap_json_parse_internal();
     JsVar *zero = jsvNewFromInteger(0);
     JsVar *r = jsvMathsOp(zero, v, '-');
     jsvUnLock2(v, zero);
     return r;
   }
   case LEX_INT: {
-    long long v = stringToInt(jslGetTokenValueAsString(lex));
-    jslGetNextToken(lex);
+    long long v = stringToInt(jslGetTokenValueAsString());
+    jslGetNextToken();
     return jsvNewFromLongInteger(v);
   }
   case LEX_FLOAT: {
-    JsVarFloat v = stringToFloat(jslGetTokenValueAsString(lex));
-    jslGetNextToken(lex);
+    JsVarFloat v = stringToFloat(jslGetTokenValueAsString());
+    jslGetNextToken();
     return jsvNewFromFloat(v);
   }
   case LEX_STR: {
-    JsVar *a = jslGetTokenValueAsVar(lex);
-    jslGetNextToken(lex);
+    JsVar *a = jslGetTokenValueAsVar();
+    jslGetNextToken();
     return a;
   }
   case '[': {
     JsVar *arr = jsvNewEmptyArray(); if (!arr) return 0;
-    jslGetNextToken(lex); // [
+    jslGetNextToken(); // [
     while (lex->tk != ']' && !jspHasError()) {
-      JsVar *value = jswrap_json_parse_internal(lex);
+      JsVar *value = jswrap_json_parse_internal();
       if (!value ||
           (lex->tk!=']' && !jslMatch(','))) {
         jsvUnLock2(value, arr);
@@ -125,13 +128,13 @@ JsVar *jswrap_json_parse_internal() {
   }
   case '{': {
     JsVar *obj = jsvNewObject(); if (!obj) return 0;
-    jslGetNextToken(lex); // {
+    jslGetNextToken(); // {
     while (lex->tk == LEX_STR && !jspHasError()) {
-      JsVar *key = jsvAsArrayIndexAndUnLock(jslGetTokenValueAsVar(lex));
-      jslGetNextToken(lex);
+      JsVar *key = jsvAsArrayIndexAndUnLock(jslGetTokenValueAsVar());
+      jslGetNextToken();
       JsVar *value = 0;
       if (!jslMatch(':') ||
-          !(value=jswrap_json_parse_internal(lex)) ||
+          !(value=jswrap_json_parse_internal()) ||
           (lex->tk!='}' && !jslMatch(','))) {
         jsvUnLock3(key, value, obj);
         return 0;
@@ -170,7 +173,7 @@ NOTE: This implementation uses eval() internally, and as such it is unsafe as it
  */
 JsVar *jswrap_json_parse(JsVar *v) {
   JsLex lex;
-  JsVar *str = jsvAsString(v, false);
+  JsVar *str = jsvAsString(v);
   JsLex *oldLex = jslSetLex(&lex);
   jslInit(str);
   jsvUnLock(str);
@@ -209,51 +212,24 @@ void jsfGetJSONForFunctionWithCallback(JsVar *var, JSONFlags flags, vcbprintf_ca
   jsvObjectIteratorFree(&it);
   cbprintf(user_callback, user_data, ") ");
 
-  if (jsvIsNative(var)) {
+  if (jsvIsNativeFunction(var)) {
     cbprintf(user_callback, user_data, "{ [native code] }");
   } else {
     if (codeVar) {
       if (flags & JSON_LIMIT) {
         cbprintf(user_callback, user_data, "{%s}", JSON_LIMIT_TEXT);
       } else {
-        user_callback("{", user_data);
+        bool hasNewLine = jsvGetStringIndexOf(codeVar,'\n')>=0;
+        user_callback(hasNewLine?"{\n  ":"{", user_data);
         if (jsvIsFunctionReturn(var))
           user_callback("return ", user_data);
         // reconstruct the tokenised output into something more readable
-        char buf[32];
-        unsigned char lastch = 0;
-        JsvStringIterator it;
-        jsvStringIteratorNew(&it, codeVar, 0);
-
-        while (jsvStringIteratorHasChar(&it)) {
-          unsigned char ch = (unsigned char)jsvStringIteratorGetChar(&it);
-          if (jslNeedSpaceBetween(lastch, ch))
-            user_callback(" ", user_data);
-          jslFunctionCharAsString(ch, buf, sizeof(buf));
-          user_callback(buf, user_data);
-          jsvStringIteratorNext(&it);
-          lastch = ch;
-        }
-        jsvStringIteratorFree(&it);
-
-        user_callback("}", user_data);
+        jslPrintTokenisedString(codeVar, user_callback, user_data);
+        user_callback(hasNewLine?"\n}":"}", user_data);
       }
     } else cbprintf(user_callback, user_data, "{}");
   }
   jsvUnLock(codeVar);
-}
-
-void jsfGetEscapedString(JsVar *var, vcbprintf_callback user_callback, void *user_data) {
-  user_callback("\"",user_data);
-  JsvStringIterator it;
-  jsvStringIteratorNew(&it, var, 0);
-  while (jsvStringIteratorHasChar(&it)) {
-    char ch = jsvStringIteratorGetChar(&it);
-    user_callback(escapeCharacter(ch), user_data);
-    jsvStringIteratorNext(&it);
-  }
-  jsvStringIteratorFree(&it);
-  user_callback("\"",user_data);
 }
 
 bool jsonNeedsNewLine(JsVar *v) {
@@ -262,11 +238,11 @@ bool jsonNeedsNewLine(JsVar *v) {
 }
 
 void jsonNewLine(JSONFlags flags, const char *whitespace, vcbprintf_callback user_callback, void *user_data) {
-  cbprintf(user_callback, user_data, "\n");
+  user_callback("\n", user_data);
   // apply the indent
   unsigned int indent = flags / JSON_INDENT;
   while (indent--)
-    cbprintf(user_callback, user_data, whitespace);
+    user_callback(whitespace, user_data);
 }
 
 static bool jsfGetJSONForObjectItWithCallback(JsvObjectIterator *it, JSONFlags flags, const char *whitespace, JSONFlags nflags, vcbprintf_callback user_callback, void *user_data, bool first) {
@@ -274,10 +250,11 @@ static bool jsfGetJSONForObjectItWithCallback(JsvObjectIterator *it, JSONFlags f
   size_t sinceNewLine = 0;
   while (jsvObjectIteratorHasValue(it) && !jspIsInterrupted()) {
     JsVar *index = jsvObjectIteratorGetKey(it);
-    JsVar *item = jsvObjectIteratorGetValue(it);
+    JsVar *item = jsvGetValueOfName(index);
     bool hidden = jsvIsInternalObjectKey(index) ||
         ((flags & JSON_IGNORE_FUNCTIONS) && jsvIsFunction(item)) ||
-        ((flags&JSON_NO_UNDEFINED) && jsvIsUndefined(item));
+        ((flags&JSON_NO_UNDEFINED) && jsvIsUndefined(item)) ||
+        jsvIsGetterOrSetter(item);
     if (!hidden) {
       sinceNewLine++;
       if (!first) cbprintf(user_callback, user_data, (flags&JSON_PRETTY)?", ":",");
@@ -293,10 +270,19 @@ static bool jsfGetJSONForObjectItWithCallback(JsvObjectIterator *it, JSONFlags f
         needNewLine = false;
         sinceNewLine = 0;
       }
-      cbprintf(user_callback, user_data, (flags&JSON_PRETTY)?"%q: ":"%q:", index);
+      bool addQuotes = true;
+      if (flags&JSON_DROP_QUOTES) {
+        if (jsvIsIntegerish(index)) addQuotes = false;
+        else if (jsvIsString(index) && jsvGetStringLength(index)<63) {
+          char buf[64];
+          jsvGetString(index,buf,sizeof(buf));
+          if (isIDString(buf)) addQuotes=false;
+        }
+      }
+      cbprintf(user_callback, user_data, addQuotes?((flags&JSON_JSON_COMPATIBILE)?"%Q%s":"%q%s"):"%v%s", index, (flags&JSON_PRETTY)?": ":":");
       if (first)
         first = false;
-      jsfGetJSONWithCallback(item, nflags, whitespace, user_callback, user_data);
+      jsfGetJSONWithCallback(item, index, nflags, whitespace, user_callback, user_data);
       needNewLine = newNeedsNewLine;
     }
     jsvUnLock2(index, item);
@@ -305,165 +291,196 @@ static bool jsfGetJSONForObjectItWithCallback(JsvObjectIterator *it, JSONFlags f
   return needNewLine;
 }
 
-void jsfGetJSONWithCallback(JsVar *var, JSONFlags flags, const char *whitespace, vcbprintf_callback user_callback, void *user_data) {
+void jsfGetJSONWithCallback(JsVar *var, JsVar *varName, JSONFlags flags, const char *whitespace, vcbprintf_callback user_callback, void *user_data) {
   JSONFlags nflags = flags + JSON_INDENT; // if we add a newline, make sure we indent any subsequent JSON more
   if (!whitespace) whitespace="  ";
 
   if (jsvIsUndefined(var)) {
-    cbprintf(user_callback, user_data, "undefined");
-  } else {
-    // Use IS_RECURSING  flag to stop recursion
-    if (var->flags & JSV_IS_RECURSING) {
-      cbprintf(user_callback, user_data, " ... ");
-      return;
-    }
-    var->flags |= JSV_IS_RECURSING;
+    cbprintf(user_callback, user_data, (flags&JSON_NO_UNDEFINED)?"null":"undefined");
+    return;
+  }
+  // Use IS_RECURSING flag to stop recursion
+  if ((var->flags & JSV_IS_RECURSING) || (jsuGetFreeStack() < 512) || jspIsInterrupted()) {
+    // also check for stack overflow/interruption
+    cbprintf(user_callback, user_data, " ... ");
+    return;
+  }
+  var->flags |= JSV_IS_RECURSING;
 
-    if (jsvIsArray(var)) {
-      JsVarInt length = jsvGetArrayLength(var);
-      bool limited = (flags&JSON_LIMIT) && (length>(JsVarInt)JSON_LIMIT_AMOUNT);
-      bool needNewLine = false;
-      cbprintf(user_callback, user_data, (flags&JSON_PRETTY)?"[ ":"[");
-      JsVarInt lastIndex = -1;
-      bool numeric = true;
-      bool first = true;
-      JsvObjectIterator it;
-      jsvObjectIteratorNew(&it, var);
-      while (lastIndex+1<length && numeric && !jspIsInterrupted()) {
-        JsVar *key = jsvObjectIteratorGetKey(&it);
-        if (!jsvObjectIteratorHasValue(&it) || jsvIsNumeric(key)) {
-          JsVarInt index = jsvObjectIteratorHasValue(&it) ? jsvGetInteger(key) : length-1;
-          JsVar *item = jsvObjectIteratorGetValue(&it);
-          while (lastIndex < index) {
-            lastIndex++;
-            if (!limited || lastIndex<(JsVarInt)JSON_LIMITED_AMOUNT || lastIndex>=length-(JsVarInt)JSON_LIMITED_AMOUNT) {
-              if (!first) cbprintf(user_callback, user_data, (flags&JSON_PRETTY)?", ":",");
-              first = false;
-              if (limited && lastIndex==length-(JsVarInt)JSON_LIMITED_AMOUNT) cbprintf(user_callback, user_data, JSON_LIMIT_TEXT);
-              bool newNeedsNewLine = ((flags&JSON_SOME_NEWLINES) && jsonNeedsNewLine(item));
-              if (flags&JSON_ALL_NEWLINES) {
-                needNewLine = true;
-                newNeedsNewLine = true;
-              }
-              if (needNewLine || newNeedsNewLine) {
-                jsonNewLine(nflags, whitespace, user_callback, user_data);
-                needNewLine = false;
-              }
-              if (lastIndex == index)
-                jsfGetJSONWithCallback(item, nflags, whitespace, user_callback, user_data);
-              else
-                cbprintf(user_callback, user_data, (flags&JSON_NO_UNDEFINED)?"null":"undefined");
-              needNewLine = newNeedsNewLine;
+  if (jsvIsArray(var)) {
+    JsVarInt length = jsvGetArrayLength(var);
+    bool limited = (flags&JSON_LIMIT) && (length>(JsVarInt)JSON_LIMIT_AMOUNT);
+    bool needNewLine = false;
+    cbprintf(user_callback, user_data, (flags&JSON_PRETTY)?"[ ":"[");
+    JsVarInt lastIndex = -1;
+    bool numeric = true;
+    bool first = true;
+    JsvObjectIterator it;
+    jsvObjectIteratorNew(&it, var);
+    while (lastIndex+1<length && numeric && !jspIsInterrupted()) {
+      JsVar *key = jsvObjectIteratorGetKey(&it);
+      if (!jsvObjectIteratorHasValue(&it) || jsvIsNumeric(key)) {
+        JsVarInt index = jsvObjectIteratorHasValue(&it) ? jsvGetInteger(key) : length-1;
+        JsVar *item = jsvObjectIteratorGetValue(&it);
+        while (lastIndex < index) {
+          lastIndex++;
+          if (!limited || lastIndex<(JsVarInt)JSON_LIMITED_AMOUNT || lastIndex>=length-(JsVarInt)JSON_LIMITED_AMOUNT) {
+            if (!first) cbprintf(user_callback, user_data, (flags&JSON_PRETTY)?", ":",");
+            first = false;
+            if (limited && lastIndex==length-(JsVarInt)JSON_LIMITED_AMOUNT) cbprintf(user_callback, user_data, JSON_LIMIT_TEXT);
+            bool newNeedsNewLine = ((flags&JSON_SOME_NEWLINES) && jsonNeedsNewLine(item));
+            if (flags&JSON_ALL_NEWLINES) {
+              needNewLine = true;
+              newNeedsNewLine = true;
             }
+            if (needNewLine || newNeedsNewLine) {
+              jsonNewLine(nflags, whitespace, user_callback, user_data);
+              needNewLine = false;
+            }
+            if (lastIndex == index) {
+              JsVar *indexVar = jsvNewFromInteger(index);
+              jsfGetJSONWithCallback(item, indexVar, nflags, whitespace, user_callback, user_data);
+              jsvUnLock(indexVar);
+            } else
+              cbprintf(user_callback, user_data, (flags&JSON_NO_UNDEFINED)?"null":"undefined");
+            needNewLine = newNeedsNewLine;
           }
-          jsvUnLock(item);
-          jsvObjectIteratorNext(&it);
-        } else {
-          numeric = false;
         }
-        jsvUnLock(key);
+        jsvUnLock(item);
+        jsvObjectIteratorNext(&it);
+      } else {
+        numeric = false;
       }
+      jsvUnLock(key);
+    }
 
-      // non-numeric  - but NOT for standard JSON
-      if ((flags&JSON_PRETTY))
-        jsfGetJSONForObjectItWithCallback(&it, flags, whitespace, nflags, user_callback, user_data, first);
-      jsvObjectIteratorFree(&it);
-      if (needNewLine) jsonNewLine(flags, whitespace, user_callback, user_data);
-      cbprintf(user_callback, user_data, (flags&JSON_PRETTY)?" ]":"]");
-    } else if (jsvIsArrayBuffer(var)) {
-      JsvArrayBufferIterator it;
-      bool allZero = true;
+    // non-numeric  - but NOT for standard JSON
+    if ((flags&JSON_PRETTY))
+      jsfGetJSONForObjectItWithCallback(&it, flags, whitespace, nflags, user_callback, user_data, first);
+    jsvObjectIteratorFree(&it);
+    if (needNewLine) jsonNewLine(flags, whitespace, user_callback, user_data);
+    cbprintf(user_callback, user_data, (flags&JSON_PRETTY)?" ]":"]");
+  } else if (jsvIsArrayBuffer(var)) {
+    JsvArrayBufferIterator it;
+    bool allZero = true;
+    jsvArrayBufferIteratorNew(&it, var, 0);
+    while (jsvArrayBufferIteratorHasElement(&it)) {
+      if (jsvArrayBufferIteratorGetFloatValue(&it)!=0)
+        allZero = false;
+      jsvArrayBufferIteratorNext(&it);
+    }
+    jsvArrayBufferIteratorFree(&it);
+    bool asArray = flags&JSON_ARRAYBUFFER_AS_ARRAY;
+
+    if (allZero && !asArray) {
+      cbprintf(user_callback, user_data, "new %s(%d)", jswGetBasicObjectName(var), jsvGetArrayBufferLength(var));
+    } else {
+      const char *aname = jswGetBasicObjectName(var);
+      /* You can't do `new ArrayBuffer([1,2,3])` so we have to output
+       * `new Uint8Array([1,2,3]).buffer`! */
+      bool isBasicArrayBuffer = strcmp(aname,"ArrayBuffer")==0;
+      if (isBasicArrayBuffer) {
+        aname="Uint8Array";
+      }
+      cbprintf(user_callback, user_data, asArray?"[":"new %s([", aname);
+      if (flags&JSON_ALL_NEWLINES) jsonNewLine(nflags, whitespace, user_callback, user_data);
+      size_t length = jsvGetArrayBufferLength(var);
+      bool limited = (flags&JSON_LIMIT) && (length>JSON_LIMIT_AMOUNT);
+      // no newlines needed for array buffers as they only contain simple stuff
+
       jsvArrayBufferIteratorNew(&it, var, 0);
-      while (jsvArrayBufferIteratorHasElement(&it)) {
-        if (jsvArrayBufferIteratorGetFloatValue(&it)!=0)
-          allZero = false;
+      while (jsvArrayBufferIteratorHasElement(&it) && !jspIsInterrupted()) {
+        if (!limited || it.index<JSON_LIMITED_AMOUNT || it.index>=length-JSON_LIMITED_AMOUNT) {
+          if (it.index>0) cbprintf(user_callback, user_data, (flags&JSON_PRETTY)?", ":",");
+          if (flags&JSON_ALL_NEWLINES) jsonNewLine(nflags, whitespace, user_callback, user_data);
+          if (limited && it.index==length-JSON_LIMITED_AMOUNT) cbprintf(user_callback, user_data, JSON_LIMIT_TEXT);
+          JsVar *item = jsvArrayBufferIteratorGetValue(&it);
+          jsfGetJSONWithCallback(item, NULL, nflags, whitespace, user_callback, user_data);
+          jsvUnLock(item);
+        }
         jsvArrayBufferIteratorNext(&it);
       }
+      if (flags&JSON_ALL_NEWLINES) jsonNewLine(flags, whitespace, user_callback, user_data);
       jsvArrayBufferIteratorFree(&it);
-      bool asArray = flags&JSON_ARRAYBUFFER_AS_ARRAY;
-
-      if (allZero && !asArray) {
-        cbprintf(user_callback, user_data, "new %s(%d)", jswGetBasicObjectName(var), jsvGetArrayBufferLength(var));
-      } else {
-        const char *aname = jswGetBasicObjectName(var);
-        /* You can't do `new ArrayBuffer([1,2,3])` so we have to output
-         * `new Uint8Array([1,2,3]).buffer`! */
-        bool isBasicArrayBuffer = strcmp(aname,"ArrayBuffer")==0;
-        if (isBasicArrayBuffer) {
-          aname="Uint8Array";
-        }
-        cbprintf(user_callback, user_data, asArray?"[":"new %s([", aname);
-        if (flags&JSON_ALL_NEWLINES) jsonNewLine(nflags, whitespace, user_callback, user_data);
-        size_t length = jsvGetArrayBufferLength(var);
-        bool limited = (flags&JSON_LIMIT) && (length>JSON_LIMIT_AMOUNT);
-        // no newlines needed for array buffers as they only contain simple stuff
-
-        jsvArrayBufferIteratorNew(&it, var, 0);
-        while (jsvArrayBufferIteratorHasElement(&it) && !jspIsInterrupted()) {
-          if (!limited || it.index<JSON_LIMITED_AMOUNT || it.index>=length-JSON_LIMITED_AMOUNT) {
-            if (it.index>0) cbprintf(user_callback, user_data, (flags&JSON_PRETTY)?", ":",");
-            if (flags&JSON_ALL_NEWLINES) jsonNewLine(nflags, whitespace, user_callback, user_data);
-            if (limited && it.index==length-JSON_LIMITED_AMOUNT) cbprintf(user_callback, user_data, JSON_LIMIT_TEXT);
-            JsVar *item = jsvArrayBufferIteratorGetValue(&it);
-            jsfGetJSONWithCallback(item, nflags, whitespace, user_callback, user_data);
-            jsvUnLock(item);
-          }
-          jsvArrayBufferIteratorNext(&it);
-        }
-        if (flags&JSON_ALL_NEWLINES) jsonNewLine(flags, whitespace, user_callback, user_data);
-        jsvArrayBufferIteratorFree(&it);
-        cbprintf(user_callback, user_data, asArray?"]":"])");
-        if (isBasicArrayBuffer) cbprintf(user_callback, user_data, ".buffer");
-      }
-    } else if (jsvIsObject(var)) {
-      IOEventFlags device = (flags & JSON_SHOW_DEVICES) ? jsiGetDeviceFromClass(var) : EV_NONE;
-      if (device!=EV_NONE) {
-        cbprintf(user_callback, user_data, "%s", jshGetDeviceString(device));
-      } else {
-        if (flags & JSON_SHOW_OBJECT_NAMES) {
-          JsVar *proto = jsvObjectGetChild(var, JSPARSE_INHERITS_VAR, 0);
-          if (jsvHasChildren(proto)) {
-            JsVar *constr = jsvObjectGetChild(proto, JSPARSE_CONSTRUCTOR_VAR, 0);
-            if (constr) {
-              JsVar *p = jsvGetIndexOf(execInfo.root, constr, true);
-              if (p) cbprintf(user_callback, user_data, "%v ", p);
-              jsvUnLock2(p,constr);
-            }
-          }
-          jsvUnLock(proto);
-        }
-
-        JsvObjectIterator it;
-        jsvObjectIteratorNew(&it, var);
-        cbprintf(user_callback, user_data, (flags&JSON_PRETTY)?"{ ":"{");
-        bool needNewLine = jsfGetJSONForObjectItWithCallback(&it, flags, whitespace, nflags, user_callback, user_data, true);
-        jsvObjectIteratorFree(&it);
-        if (needNewLine) jsonNewLine(flags, whitespace, user_callback, user_data);
-        cbprintf(user_callback, user_data, (flags&JSON_PRETTY)?" }":"}");
-      }
-    } else if (jsvIsFunction(var)) {
-      if (flags & JSON_IGNORE_FUNCTIONS) {
-        cbprintf(user_callback, user_data, "undefined");
-      } else {
-        cbprintf(user_callback, user_data, "function ");
-        jsfGetJSONForFunctionWithCallback(var, nflags, user_callback, user_data);
-      }
-    } else if (jsvIsString(var) && !jsvIsName(var)) {
-      if ((flags&JSON_LIMIT) && jsvGetStringLength(var)>JSON_LIMIT_STRING_AMOUNT) {
-        // if the string is too big, split it and put dots in the middle
-        JsVar *var1 = jsvNewFromStringVar(var, 0, JSON_LIMITED_STRING_AMOUNT);
-        JsVar *var2 = jsvNewFromStringVar(var, jsvGetStringLength(var)-JSON_LIMITED_STRING_AMOUNT, JSON_LIMITED_STRING_AMOUNT);
-        cbprintf(user_callback, user_data, "%q%s%q", var1, JSON_LIMIT_TEXT, var2);
-        jsvUnLock2(var1, var2);
-      } else {
-        cbprintf(user_callback, user_data, "%q", var);
-      }
-    } else {
-      cbprintf(user_callback, user_data, "%v", var);
+      cbprintf(user_callback, user_data, asArray?"]":"])");
+      if (isBasicArrayBuffer && !asArray) cbprintf(user_callback, user_data, ".buffer");
     }
-
-    var->flags &= ~JSV_IS_RECURSING;
+  } else if (jsvIsObject(var)) {
+    IOEventFlags device = (flags & JSON_SHOW_DEVICES) ? jsiGetDeviceFromClass(var) : EV_NONE;
+    if (device!=EV_NONE) {
+      cbprintf(user_callback, user_data, "%s", jshGetDeviceString(device));
+    } else {
+      bool showContents = true;
+      if (flags & JSON_SHOW_OBJECT_NAMES) {
+        JsVar *proto = jsvObjectGetChild(var, JSPARSE_INHERITS_VAR, 0);
+        if (jsvHasChildren(proto)) {
+          JsVar *constr = jsvObjectGetChild(proto, JSPARSE_CONSTRUCTOR_VAR, 0);
+          if (constr) {
+            JsVar *p = jsvGetIndexOf(execInfo.root, constr, true);
+            if (p) cbprintf(user_callback, user_data, "%v: ", p);
+            jsvUnLock2(p,constr);
+            /* We had the constructor - now if there was a non-default toString function
+             * we'll execute it and print the result */
+            JsVar *toStringFn = jspGetNamedField(var, "toString", false);
+            if (jsvIsFunction(toStringFn) && toStringFn->varData.native.ptr != (void (*)(void))jswrap_object_toString) {
+              // Function found and it's not the default one - execute it
+              JsVar *result = jspExecuteFunction(toStringFn,var,0,0);
+              cbprintf(user_callback, user_data, "%v", result);
+              jsvUnLock(result);
+              showContents = false; // we already printed something
+            }
+            jsvUnLock(toStringFn);
+          }
+        }
+        jsvUnLock(proto);
+      }
+      if (showContents) {
+        JsVar *toStringFn = 0;
+        if (flags & JSON_ALLOW_TOJSON)
+          toStringFn = jspGetNamedField(var, "toJSON", false);
+        if (jsvIsFunction(toStringFn)) {
+          JsVar *varNameStr = varName ? jsvAsString(varName) : 0;
+          JsVar *result = jspExecuteFunction(toStringFn,var,1,&varNameStr);
+          jsvUnLock(varNameStr);
+          if (result==var) var->flags &= ~JSV_IS_RECURSING;
+          jsfGetJSONWithCallback(result, NULL, flags&~JSON_ALLOW_TOJSON, whitespace, user_callback, user_data);
+          jsvUnLock(result);
+        } else {
+          JsvObjectIterator it;
+          jsvObjectIteratorNew(&it, var);
+          cbprintf(user_callback, user_data, (flags&JSON_PRETTY)?"{ ":"{");
+          bool needNewLine = jsfGetJSONForObjectItWithCallback(&it, flags, whitespace, nflags, user_callback, user_data, true);
+          jsvObjectIteratorFree(&it);
+          if (needNewLine) jsonNewLine(flags, whitespace, user_callback, user_data);
+          cbprintf(user_callback, user_data, (flags&JSON_PRETTY)?" }":"}");
+        }
+        jsvUnLock(toStringFn);
+      }
+    }
+  } else if (jsvIsFunction(var)) {
+    if (flags & JSON_IGNORE_FUNCTIONS) {
+      cbprintf(user_callback, user_data, "undefined");
+    } else {
+      cbprintf(user_callback, user_data, "function ");
+      jsfGetJSONForFunctionWithCallback(var, nflags, user_callback, user_data);
+    }
+  } else if (jsvIsString(var) && !jsvIsName(var)) {
+    if ((flags&JSON_LIMIT) && jsvGetStringLength(var)>JSON_LIMIT_STRING_AMOUNT) {
+      // if the string is too big, split it and put dots in the middle
+      JsVar *var1 = jsvNewFromStringVar(var, 0, JSON_LIMITED_STRING_AMOUNT);
+      JsVar *var2 = jsvNewFromStringVar(var, jsvGetStringLength(var)-JSON_LIMITED_STRING_AMOUNT, JSON_LIMITED_STRING_AMOUNT);
+      cbprintf(user_callback, user_data, "%q%s%q", var1, JSON_LIMIT_TEXT, var2);
+      jsvUnLock2(var1, var2);
+    } else {
+      cbprintf(user_callback, user_data, (flags&JSON_JSON_COMPATIBILE)?"%Q":"%q", var);
+    }
+  } else if ((flags&JSON_JSON_COMPATIBILE) && jsvIsFloat(var) && !isfinite(jsvGetFloat(var))) {
+    cbprintf(user_callback, user_data, "null");
+  } else {
+    cbprintf(user_callback, user_data, "%v", var);
   }
+
+  var->flags &= ~JSV_IS_RECURSING;
 }
 
 void jsfGetJSONWhitespace(JsVar *var, JsVar *result, JSONFlags flags, const char *whitespace) {
@@ -472,7 +489,7 @@ void jsfGetJSONWhitespace(JsVar *var, JsVar *result, JSONFlags flags, const char
   jsvStringIteratorNew(&it, result, 0);
   jsvStringIteratorGotoEnd(&it);
 
-  jsfGetJSONWithCallback(var, flags, whitespace, (vcbprintf_callback)&jsvStringIteratorPrintfCallback, &it);
+  jsfGetJSONWithCallback(var, NULL, flags, whitespace, (vcbprintf_callback)&jsvStringIteratorPrintfCallback, &it);
 
   jsvStringIteratorFree(&it);
 }
@@ -482,7 +499,7 @@ void jsfGetJSON(JsVar *var, JsVar *result, JSONFlags flags) {
 }
 
 void jsfPrintJSON(JsVar *var, JSONFlags flags) {
-  jsfGetJSONWithCallback(var, flags, 0, (vcbprintf_callback)jsiConsolePrintString, 0);
+  jsfGetJSONWithCallback(var, NULL, flags, 0, (vcbprintf_callback)jsiConsolePrintString, 0);
 }
 void jsfPrintJSONForFunction(JsVar *var, JSONFlags flags) {
   jsfGetJSONForFunctionWithCallback(var, flags, (vcbprintf_callback)jsiConsolePrintString, 0);

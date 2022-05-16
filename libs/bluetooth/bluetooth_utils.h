@@ -30,6 +30,12 @@
 #define BLE_NAME_NUS                    "BLE_UART"
 #define BLE_NAME_FLAGS                  "BLE_FLAGS"
 #define BLE_NAME_GATT_SERVER            "BLE_GATTS"
+#define BLE_NAME_SECURITY               "BLE_SEC"
+#define BLE_NAME_MAC_ADDRESS            "BLE_MAC"
+#if ESPR_BLUETOOTH_ANCS
+#define BLE_NAME_ANCS                   "BLE_ANCS"
+#define BLE_NAME_AMS                    "BLE_AMS"
+#endif
 
 typedef enum {
   BLE_FLAGS_NONE = 0,

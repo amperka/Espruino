@@ -15,16 +15,23 @@
 #include "platform_config.h"
 #include "jsinteractive.h"
 #include "jshardware.h"
+#include "nrf5x_utils.h"
+#include "jswrapper.h"
 
 int main() {
 
+  // Ensure UICR flags are set correctly for the current device
+  // Will cause a reboot if flags needed to be reset
+  nrf_configure_uicr_flags();
+
   jshInit();
+  jswHWInit();
 
   bool buttonState = false;
 #ifdef BTN1_PININDEX
   buttonState = jshPinGetValue(BTN1_PININDEX) == BTN1_ONSTATE;
 #endif
-  jsvInit();
+  jsvInit(0);
   jsiInit(!buttonState /* load from flash by default */); // pressing USER button skips autoload
 
   while (1) 
@@ -35,3 +42,9 @@ int main() {
   //jsvKill();
   //jshKill();
 }
+
+#ifdef LD_NOSTARTFILES
+void _start(){
+  main();
+}
+#endif

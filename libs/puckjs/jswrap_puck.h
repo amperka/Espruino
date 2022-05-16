@@ -13,14 +13,40 @@
  */
 #include "jspin.h"
 
+
+typedef enum {
+  PUCKJS_UNKNOWN, // Maybe some I2C failure?
+  PUCKJS_1V0, // MAG3110 magnetometer
+  PUCKJS_2V0, // LIS3MDLTR magnetometer, LSM6DS3TR-C accel/gyro, PCT2075TP temperature
+  PUCKJS_2V1, // MMC5603NJ magnetometer, LSM6DS3TR-C accel/gyro, PCT2075TP temperature
+} PuckVersion;
+
+PuckVersion puckVersion;
+
+#define PUCKJS_HAS_ACCEL (puckVersion==PUCKJS_2V0 || puckVersion==PUCKJS_2V1)
+#define PUCKJS_HAS_IR_FET (puckVersion==PUCKJS_2V0 || puckVersion==PUCKJS_2V1)
+#define PUCKJS_HAS_TEMP_SENSOR (puckVersion==PUCKJS_2V0 || puckVersion==PUCKJS_2V1)
+
+JsVar *jswrap_puck_getHardwareVersion();
+
 void jswrap_puck_magOn();
 void jswrap_puck_magOff();
 JsVar *jswrap_puck_mag();
-JsVarInt jswrap_puck_magTemp();
+JsVarFloat jswrap_puck_magTemp();
+void jswrap_puck_magWr(JsVarInt reg, JsVarInt data);
+int jswrap_puck_magRd(JsVarInt reg);
+JsVarFloat jswrap_puck_getTemperature();
+
+void jswrap_puck_accelOn(JsVarFloat hz);
+void jswrap_puck_accelOff();
+JsVar *jswrap_puck_accel();
+void jswrap_puck_accelWr(JsVarInt reg, JsVarInt data);
+int jswrap_puck_accelRd(JsVarInt reg);
+
 void jswrap_puck_IR(JsVar *data, Pin cathode, Pin anode);
 int jswrap_puck_capSense(Pin tx, Pin rx);
 JsVarFloat jswrap_puck_light();
-int jswrap_puck_getBatteryPercentage();
+JsVarInt jswrap_puck_getBattery();
 bool jswrap_puck_selfTest();
 
 void jswrap_puck_init();

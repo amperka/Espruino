@@ -16,17 +16,24 @@
 # Needs:
 #    pip install markdown
 #    pip install markdown-urlize
+#
+# See common.py -> get_jsondata for command line options
 
 import subprocess;
 import re;
 import json;
 import sys;
 import os;
-sys.path.append(".");
 import common
 import urllib2
 import markdown
 import htmlentitydefs
+
+sys.path.append(".");
+scriptdir = os.path.dirname(os.path.realpath(__file__))
+basedir = scriptdir+"/../"
+sys.path.append(basedir+"scripts");
+sys.path.append(basedir+"boards");
 
 # Scans files for comments of the form /*JSON......*/ and then writes out an HTML file describing
 # all the functions
@@ -41,7 +48,7 @@ htmldev = False
 
 jsondatas = common.get_jsondata(True)
 
-classes = []
+classes = [] # list of class names
 libraries = []
 for jsondata in jsondatas:
   if "class" in jsondata:
@@ -68,27 +75,31 @@ if os.path.isfile(mdnURLFile):
 htmlFile = open('functions.html', 'w')
 def html(s): htmlFile.write(s+"\n");
 
-def htmlify(d):
-  d = markdown.markdown(d, extensions=['urlize'])
+def htmlify(d,current):
+  d = markdown.markdown(d, extensions=['urlize'], tab_length=2)
   # replace <code> with newlines with pre
   idx = d.find("<code>")
   end = d.find("</code>", idx)
   while idx>=0 and end>idx:
-    codeBlock = d[idx:end+7]
+    codeBlock = d[idx+6:end]
+    # search for known links in code
+    if codeBlock[-2:]=="()" and codeBlock[:-2] in links:
+      codeBlock = "<a href=\"#"+links[codeBlock[:-2]]+"\">"+codeBlock+"</a>";
+    elif codeBlock in links:
+      codeBlock = "<a href=\"#"+links[codeBlock]+"\">"+codeBlock+"</a>";
+    # ensure multi-line code is handled correctly
+    codeBlock = "<code>"+codeBlock+"</code>";
     if codeBlock.find("\n")>=0:
-      d = d[0:idx]+"<pre>"+codeBlock+"</pre>"+d[end+7:];
-    idx = d.find("<code>", end+7+5+6)
+      codeBlock = "<pre>"+codeBlock+"</pre>"
+    d = d[0:idx]+codeBlock+d[end+7:];
+    # search again
+    idx = d.find("<code>", end)
     end = d.find("</code>", idx)
   return d;
 
 def html_description(d,current):
   if isinstance(d, list): d = "\n".join(d)
-  d = htmlify(d)
-  for link in links:
-    if link!=current:
-      d = d.replace(" "+link+" ", " <a href=\"#"+links[link]+"\">"+link+"</a> ")
-      d = d.replace(" "+link+".", " <a href=\"#"+links[link]+"\">"+link+"</a>.")
-      d = d.replace(" "+link+"(", " <a href=\"#"+links[link]+"\">"+link+"</a>(")
+  d = htmlify(d,current)
   html("<div class=\"description\">\n" + d + "\n</div>\n")
 
 def get_prefixed_name(jsondata):
@@ -121,7 +132,9 @@ def get_surround(jsondata):
   s = common.get_prefix_name(jsondata)
   if s!="": s = s + " "
   if jsondata["type"]!="constructor":
-    if "class" in jsondata: s=s+jsondata["class"]+"."
+    if "class" in jsondata: 
+      if jsondata["class"] in libraries: s=s+"require(\""+jsondata["class"]+"\")."
+      else: s=s+jsondata["class"]+"."
   s=s+jsondata["name"]
   if jsondata["type"]!="object":
     s=s+get_arguments(jsondata)
@@ -176,6 +189,21 @@ def insert_mdn_link(jsondata):
       else: valid_mdn_urls['invalid'].append(url)
     if code==200:
       html("<p><a href=\""+url+"\">View MDN documentation</a></p>")
+
+
+# Remove duplicates
+existingSymbols = {}
+unduplicatedjsondatas = []
+for jsondata in jsondatas:
+  duplicate = False
+  if "name" in jsondata:
+    n = get_fullname(jsondata)
+    if n in existingSymbols:
+      print("WARNING: Duplicate symbol "+n);
+      duplicate = True
+    existingSymbols[n] = jsondata
+  if not duplicate: unduplicatedjsondatas.append(jsondata)
+jsondatas = unduplicatedjsondatas
 
 html("<html>")
 html(" <head>")
@@ -241,25 +269,27 @@ if htmldev == True:
 
 detail = []
 links = {}
+def add_link(jsondata):
+  if not "no_create_links" in jsondata:
+    link = get_prefixed_name(jsondata);
+    if link!="global":
+      links[link] = get_link(jsondata)
 jsondatas = sorted(jsondatas, key=lambda s: common.get_name_or_space(s).lower())
 
 html('  <div id="contents">')
 html("  <h2><a name=\"contents\"></a>Contents</h2>")
 html("  <ul>")
-html("  <li><a class=\"blush\" name=\"t__global\" href=\"#_global\" onclick=\"place('_global');\">Globals</A></li>")
+html("  <li><a class=\"blush\" name=\"t__global\" href=\"#_global\" onclick=\"place('_global');\">Globals</a></li>")
 for jsondata in jsondatas:
   if "name" in jsondata and not "class" in jsondata:
-    link = get_link(jsondata)
-    if not "no_create_links" in jsondata:
-      links[get_prefixed_name(jsondata)] = link
+    add_link(jsondata)
     detail.append(jsondata)
 for className in sorted(classes, key=lambda s: s.lower()):
   html("  <li><a class=\"blush\" name=\"t_"+className+"\" href=\"#"+className+"\" onclick=\"place('"+className+"');\">"+className+"</a></li>")
+  links[className] = className
   for jsondata in jsondatas:
     if "name" in jsondata and "class" in jsondata and jsondata["class"]==className:
-      link = get_link(jsondata)
-      if not "no_create_links" in jsondata:
-        links[get_prefixed_name(jsondata)] = link
+      add_link(jsondata)
       detail.append(jsondata)
 html("  </ul>")
 html('  </div><!-- Contents -->')
@@ -283,6 +313,7 @@ for jsondata in detail:
     niceName="Globals"
     linkName="_global"
 
+  # If we're on to a different class now, put up the heading for it
   if className!=lastClass:
     lastClass=className
     html("<h2 class=\"class\"><a class=\"blush\" name=\""+linkName+"\" href=\"#t_"+linkName+"\" onclick=\"place('t_"+linkName+"');\">"+niceName+"</a></h2>")
@@ -300,20 +331,23 @@ for jsondata in detail:
       text = ""
       for j in instances:
         text = text + " * [`"+j["name"]+"`](#l__global_"+j["name"]+")";
-        if "description" in j: text = text + " " + j["description"]
+        if "description" in j:           
+          text = text + " " + j["description"].split("\n")[0]
         text = text + "\n"
       html_description(text, "")
 
     html("  <h4>Methods and Fields</h4>")
     html("  <ul>")
     for j in jsondatas:
-      if ("name" in j) and (className!="" or not "instanceof" in j) and ((className=="" and not "class" in j) or ("class" in j and j["class"]==className)):
+      if ("name" in j) and ((className=="" and not "class" in j) or ("class" in j and j["class"]==className)):
         link = get_link(j)
         html("    <li><a name=\"t_"+link+"\" href=\"#"+link+"\">"+get_surround(j)+"</a></li>")
     html("  </ul>")
-  link = get_link(jsondata)
+
+  # Otherwise just output detail
+  link = get_link(jsondata)  
   html("  <h3 class=\"detail\"><a class=\"blush\" name=\""+link+"\" href=\"#t_"+link+"\" onclick=\"place('t_"+link+"','"+linkName+"');\">"+get_fullname(jsondata)+"</a>")
-  html("<!-- "+json.dumps(jsondata, sort_keys=True, indent=2)+"-->");
+  #html("<!-- "+json.dumps(jsondata, sort_keys=True, indent=2)+"-->");
   if "githublink" in jsondata:
     html('<a class="githublink" title="Link to source code on GitHub" href="'+jsondata["githublink"]+'">&rArr;</a>');
   html("</h3>")
@@ -324,19 +358,6 @@ for jsondata in detail:
     html("   <div class=\"call\"><code>"+get_code(jsondata)+"</code></div>")
   elif "instanceof" in jsondata:
     html("   <h4>Instance of <a href=\"#"+jsondata["instanceof"]+"\"><code>"+jsondata["instanceof"]+"</code></a>")
-  if "description" in jsondata:
-    html("  <h4>Description</h4>")
-    desc = jsondata["description"]
-    if not isinstance(desc, list): desc = [ desc ]
-    if "ifdef" in jsondata: 
-      desc.append("\n\n**Note:** This is only available in "+common.get_ifdef_description(jsondata["ifdef"]));
-    if "ifndef" in jsondata:
-      desc.append("\n\n**Note:** This is not available in "+common.get_ifdef_description(jsondata["ifndef"]));
-    if "if" in jsondata:
-      d = jsondata["if"].replace("||", " and ").replace("&&", " with ")
-      d = re.sub('defined\((.+?)\)', replace_with_ifdef_description, d)
-      desc.append("\n\n**Note:** This is only available in "+d);            
-    html_description(desc, jsondata["name"])
   if "params" in jsondata:
     html("  <h4>Parameters</h4>")
     for param in jsondata["params"]:
@@ -345,13 +366,37 @@ for jsondata in detail:
       if isinstance(desc, list): desc = '<br/>'.join(desc)
       extra = ""
       if  param[1]=="JsVarArray": extra = ", ...";
-      html("   <div class=\"param\">"+htmlify("`"+param[0]+extra+"` - "+desc)+"</div>")
+      html("   <div class=\"param\">"+htmlify("`"+param[0]+extra+"` - "+desc,"")+"</div>")
   if "return" in jsondata:
     html("  <h4>Returns</h4>")
     desc = ""
     if len(jsondata["return"])>1: desc=jsondata["return"][1]
     if desc=="": desc="See description above"
-    html("   <div class=\"return\">"+htmlify(desc)+"</div>")
+    html("   <div class=\"return\">"+htmlify(desc,"")+"</div>")
+  if "description" in jsondata:
+    html("  <h4>Description</h4>")
+    desc = jsondata["description"]
+    if not isinstance(desc, list): desc = [ desc ]
+    if "ifdef" in jsondata: 
+      desc.append("\n\n**Note:** This is only available in "+common.get_ifdef_description(jsondata["ifdef"]));
+    if "ifndef" in jsondata:
+      desc.append("\n\n**Note:** This is not available in "+common.get_ifdef_description(jsondata["ifndef"]));
+    if "#if" in jsondata:
+      d = jsondata["#if"];
+      dprefix = "This is only available in ";
+      if re.match('^!defined\((.+?)\) && !defined\((.+?)\)$', d):
+        dprefix = "This is not available in ";
+        d = re.sub('^!defined\((.+?)\) && !defined\((.+?)\)$', "defined(\\1) or defined(\\2)", d)
+      if re.match('^!defined\((.+?)\)$', d):
+        dprefix = "This is not available in ";
+        d = re.sub('^!defined\((.+?)\)$', "defined(\\1)", d)
+      d = re.sub('!defined\(', "not defined(", d)
+      d = d.replace("||", " and ").replace("&&", " with ")
+      d = re.sub('defined\((.+?)\)', replace_with_ifdef_description, d)
+      d = re.sub('(.*)_COUNT>=(.*)', "devices with more than \\2 \\1 peripherals", d)
+      desc.append("\n\n**Note:** "+dprefix+d);
+    html_description(desc, jsondata["name"])
+
 
   url = "http://www.espruino.com/Reference#"+get_link(jsondata)
   if url in code_uses:
@@ -371,18 +416,25 @@ html("</html>")
 # --------------------------------------------------------------------------
 keywords = {}
 for j in jsondatas:
+  jkeywords = []
   if ("name" in j):
     item = { "title" : get_surround(j), "path": "/Reference#"+get_link(j) };
     jkeywords = [ j["name"] ]
     if get_prefixed_name(j)!=j["name"]: jkeywords.append(get_prefixed_name(j))
     if "class" in j: jkeywords.append(j["class"])
+  elif j["type"]=="library":
+    item = { "title" : j["class"]+" Library", "path": "/Reference#"+j["class"] };
+    jkeywords = [ j["class"] ]
+  elif j["type"]=="class":
+    item = { "title" : j["class"]+" Class", "path": "/Reference#"+j["class"] };
+    jkeywords = [ j["class"] ]
 
-    for k in jkeywords:
-      k = k.lower()
-      if not k in keywords:
-        keywords[k] = [ item ]
-      else:
-        keywords[k].append(item)
+  for k in jkeywords:
+    k = k.lower()
+    if not k in keywords:
+      keywords[k] = [ item ]
+    else:
+      keywords[k].append(item)
 
 #print(json.dumps(keywords, sort_keys=True, indent=2))
 keywordFile = open('function_keywords.js', 'w')

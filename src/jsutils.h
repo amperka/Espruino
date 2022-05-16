@@ -26,9 +26,9 @@
 #include <math.h>
 
 #ifndef BUILDNUMBER
-#define JS_VERSION "1v96"
+#define JS_VERSION "2v13"
 #else
-#define JS_VERSION "1v96." BUILDNUMBER
+#define JS_VERSION "2v13." BUILDNUMBER
 #endif
 /*
   In code:
@@ -37,12 +37,15 @@
   OPT - potential for speed optimisation
 */
 
-#ifndef alloca
-#define alloca(x) __builtin_alloca(x)
-#endif
-
 #ifdef SAVE_ON_FLASH
 #define SAVE_ON_FLASH_MATH 1
+#ifndef BLUETOOTH
+#define NO_DATAVIEW
+#endif
+#endif
+
+#ifndef alloca
+#define alloca(x) __builtin_alloca(x)
 #endif
 
 #if defined(ESP8266)
@@ -103,6 +106,16 @@ int flash_strcmp(const char *mem, const char *flash);
 
 #endif
 
+#ifdef FLASH_64BITS_ALIGNMENT
+typedef uint64_t JsfWord;
+#define JSF_ALIGNMENT 8
+#define JSF_WORD_UNSET 0xFFFFFFFFFFFFFFFFULL
+#else
+typedef uint32_t JsfWord;
+#define JSF_ALIGNMENT 4
+#define JSF_WORD_UNSET 0xFFFFFFFF
+#endif
+
 
 #if defined(ESP8266)
 /** For the esp8266 we need to add CALLED_FROM_INTERRUPT to all functions that may execute at
@@ -118,7 +131,9 @@ int flash_strcmp(const char *mem, const char *flash);
 #endif
 #endif
 
-
+#define STRINGIFY_HELPER(x) #x
+#define STRINGIFY(x) STRINGIFY_HELPER(x)
+#define NOT_USED(x) ( (void)(x) )
 
 #if !defined(__USB_TYPE_H) && !defined(CPLUSPLUS) && !defined(__cplusplus) // it is defined in this file too!
 #undef FALSE
@@ -129,88 +144,136 @@ int flash_strcmp(const char *mem, const char *flash);
 //typedef unsigned char bool;
 #endif
 
-
+#ifndef DBL_MIN
 #define DBL_MIN 2.2250738585072014e-308
+#endif
+#ifndef DBL_MAX
 #define DBL_MAX 1.7976931348623157e+308
+#endif
 
-/* Number of Js Variables allowed and Js Reference format.
+/* Number of JS Variables allowed and JS Variable reference format.
 
-   JsVarRef = uint8_t -> 15 bytes/JsVar   so JSVAR_CACHE_SIZE = (RAM - 3000) / 15
-   JsVarRef = uint16_t -> 20 bytes/JsVar   so JSVAR_CACHE_SIZE = (RAM - 3000) / 20
-   JsVarRef = uint32_t -> 26 bytes/JsVar   so JSVAR_CACHE_SIZE = (RAM - 3000) / 26
+There are (on 32 bit platforms):
+* 4 bytes of data at the start
+* 4 JsVarRef + 1 JsVarRefCounter
+* 2 bytes of flags at the end
+
+See comments after JsVar in jsvar.c for more info.
+
+   JsVarRef = uint8_t -> 12 bytes/JsVar       so JSVAR_CACHE_SIZE = (RAM - 3000) / 12
+   JsVarRef = uint16_t -> 13->16 bytes/JsVar  so JSVAR_CACHE_SIZE = (RAM - 3000) / 16
+   JsVarRef = uint32_t -> 20 bytes/JsVar      so JSVAR_CACHE_SIZE = (RAM - 3000) / 20
 
    NOTE: JSVAR_CACHE_SIZE must be at least 2 less than the number we can fit in JsVarRef
          See jshardware.c FLASH constants - all this must be able to fit in flash
 
-
 */
 
 #ifdef RESIZABLE_JSVARS
- //  probably linux - allow us to allocate more blocks of variables
+ // Probably Linux - 32 bits allow us to allocate more blocks of variables,
+ // but is a lot less efficient with memory
   typedef uint32_t JsVarRef;
   typedef int32_t JsVarRefSigned;
-  #define JSVARREF_MIN (-2147483648)
-  #define JSVARREF_MAX 2147483647
-  #define JSVARREF_SIZE 4
+  #define JSVARREF_BITS 32
+  #define JSVARREFCOUNT_BITS 8
 #else
-   /** JsVerRef stores References for variables - We treat 0 as null
+   /** JsVarRaf stores References for variables - We treat 0 as null
    *  NOTE: we store JSVAR_DATA_STRING_* as actual values so we can do #if on them below
    *
    */
-  #if JSVAR_CACHE_SIZE <= 254
+  #if JSVAR_FORCE_16_BYTE // Forces full 16 bits used -> 16 bit JsVar
+    // This creates less (and faster) code for the Espruino interpreter,
+    // but isn't as efficient with memory.
+    #define JSVARREF_BITS 16
+    #define JSVARREFCOUNT_BITS 8
+    typedef uint16_t JsVarRef;
+    typedef int16_t JsVarRefSigned;
+    // Otherwise use just enough bits for everything we need. We set
+    // JSVARREF_BITS to enough for JSVAR_CACHE_SIZE, and then look at
+    // how much space is left over, and adjust JSVARREFCOUNT_BITS
+    // to fit in what is remaining
+  #elif JSVAR_CACHE_SIZE <= 254 // 12 bytes
+    #define JSVARREF_BITS 8
+    #define JSVARREFCOUNT_PACK_BITS 8 // ensure we have enough space to store a 'double'. This is effectively just wasted space
+    #define JSVARREFCOUNT_BITS 6
     typedef uint8_t JsVarRef;
     typedef int8_t JsVarRefSigned;
-    #define JSVARREF_MIN (-128)
-    #define JSVARREF_MAX 127
-    #define JSVARREF_SIZE 1
-  #elif JSVAR_CACHE_SIZE <= 1023
-    /* for this, we use 10 bit refs. GCC can't do that so store refs as
-     * single bytes and then manually pack an extra 2 bits for each of
-     * the refs into a byte called 'pack'
-     *
-     * We also put the 2 bits from lastChild into 'flags', because then
-     * we can use 'pack' for character data in a stringext
-     *
-     * Note that JsVarRef/JsVarRefSigned are still 2 bytes, which means
-     * we're only messing around when loading/storing refs - not when
-     * passing them around.
-     */
-    #define JSVARREF_PACKED_BITS 2
+  #elif JSVAR_CACHE_SIZE <= 1023 // 12 bytes
+    #define JSVARREF_BITS 10
+    #define JSVARREFCOUNT_PACK_BITS 2 // ensure we have enough space to store a 'double'
+    #define JSVARREFCOUNT_BITS 6 // 48 - (10*4 + 2)
     typedef uint16_t JsVarRef;
     typedef int16_t JsVarRefSigned;
-    #define JSVARREF_MIN (-512)
-    #define JSVARREF_MAX 511
-    #define JSVARREF_SIZE 1
+  #elif JSVAR_CACHE_SIZE <= 2047 // 12 bytes
+    #define JSVARREF_BITS 11
+    #define JSVARREFCOUNT_BITS 4 // 48 - 11*4
+    typedef uint16_t JsVarRef;
+    typedef int16_t JsVarRefSigned;
+  #elif JSVAR_CACHE_SIZE <= 4095 // 13 bytes
+    #define JSVARREF_BITS 12
+    #define JSVARREFCOUNT_BITS 8 // 56 - 12*4
+    typedef uint16_t JsVarRef;
+    typedef int16_t JsVarRefSigned;
+  #elif JSVAR_CACHE_SIZE <= 8191 // 13 bytes
+    #define JSVARREF_BITS 13
+    #define JSVARREFCOUNT_BITS 4 // 56 - 13*4
+    typedef uint16_t JsVarRef;
+    typedef int16_t JsVarRefSigned;
+  #elif JSVAR_CACHE_SIZE <= 65535 // 16 bytes
+    #define JSVARREF_BITS 16
+    #define JSVARREFCOUNT_BITS 8
+    typedef uint16_t JsVarRef;
+    typedef int16_t JsVarRefSigned;
   #else
-    typedef uint16_t JsVarRef;
-    typedef int16_t JsVarRefSigned;
-    #define JSVARREF_MIN (-32768)
-    #define JSVARREF_MAX 32767
-    #define JSVARREF_SIZE 2
+    #error "Assuming 16 bit refs we can't go above 65534 elements"
   #endif
 #endif
 
+#ifndef JSVARREFCOUNT_PACK_BITS
+#define JSVARREFCOUNT_PACK_BITS 0
+#endif
+
+#define JSVARREF_MIN (-(1<<(JSVARREF_BITS-1)))
+#define JSVARREF_MAX ((1<<(JSVARREF_BITS-1))-1)
+#define JSVARREFCOUNT_MAX ((1<<JSVARREFCOUNT_BITS)-1)
+
 #if defined(__WORDSIZE) && __WORDSIZE == 64
 // 64 bit needs extra space to be able to store a function pointer
-
 /// Max length of JSV_NAME_ strings
 #define JSVAR_DATA_STRING_NAME_LEN  8
 #else
 /// Max length of JSV_NAME_ strings
 #define JSVAR_DATA_STRING_NAME_LEN  4
 #endif
-/// Max length for a JSV_STRING
-#define JSVAR_DATA_STRING_LEN  (JSVAR_DATA_STRING_NAME_LEN+(3*JSVARREF_SIZE))
-/// Max length for a JSV_STRINGEXT
-#ifdef JSVARREF_PACKED_BITS
-#define JSVAR_DATA_STRING_MAX_LEN (JSVAR_DATA_STRING_NAME_LEN+(3*JSVARREF_SIZE)+JSVARREF_SIZE+1) // (JSVAR_DATA_STRING_LEN + sizeof(JsVarRef)*3 + sizeof(JsVarRefCounter) + sizeof(pack))
-#else
-#define JSVAR_DATA_STRING_MAX_LEN (JSVAR_DATA_STRING_NAME_LEN+(3*JSVARREF_SIZE)+JSVARREF_SIZE) // (JSVAR_DATA_STRING_LEN + sizeof(JsVarRef)*3 + sizeof(JsVarRefCounter))
-#endif
+
+
+/// Max length for a JSV_STRING, JsVar.varData.ref.refs (see comments under JsVar decl in jsvar.h)
+#define JSVAR_DATA_STRING_LEN (JSVAR_DATA_STRING_NAME_LEN + ((JSVARREF_BITS*3 + JSVARREFCOUNT_PACK_BITS)>>3))
+/// Max length for a JSV_STRINGEXT, JsVar.varData.ref.lastChild (see comments under JsVar decl in jsvar.h)
+#define JSVAR_DATA_STRING_MAX_LEN (JSVAR_DATA_STRING_NAME_LEN + ((JSVARREF_BITS*3 + JSVARREFCOUNT_PACK_BITS + JSVARREFCOUNT_BITS)>>3))
+
+/*
+In the above, ideally we'd just ask the compiler for the the address offset of the relevant
+field, but because they are bitfields we can't get pointers to them!
+*/
 
 /** This is the amount of characters at which it'd be more efficient to use
  * a flat string than to use a normal string... */
 #define JSV_FLAT_STRING_BREAK_EVEN (JSVAR_DATA_STRING_LEN + JSVAR_DATA_STRING_MAX_LEN)
+
+// Sanity checks
+#if JSVARREFCOUNT_BITS <= 8
+    typedef uint8_t JsVarRefCounter;
+#else
+#error "Assumed JSVARREFCOUNT_BITS was 8 or less"
+#endif
+
+#if (JSVAR_DATA_STRING_NAME_LEN + ((JSVARREF_BITS*3 + JSVARREFCOUNT_PACK_BITS)>>3)) < 8
+#pragma message "required length (bits) : 64"
+#pragma message "initial data block length (bits) : " STRINGIFY(JSVAR_DATA_STRING_NAME_LEN*8)
+#pragma message "3x refs plus packing (bits) : " STRINGIFY(JSVARREF_BITS*3 + JSVARREFCOUNT_PACK_BITS)
+#error JsVarDataRef is not big enough to store a double value
+#endif
 
 typedef int32_t JsVarInt;
 typedef uint32_t JsVarIntUnsigned;
@@ -227,7 +290,9 @@ typedef int64_t JsSysTime;
 #define JSLEX_MAX_TOKEN_LENGTH  64 ///< Maximum length we allow tokens (eg. variable names) to be
 #define JS_ERROR_TOKEN_BUF_SIZE 16 ///< see jslTokenAsString
 
-#define JS_NUMBER_BUFFER_SIZE 66 ///< 64 bit base 2 + minus + terminating 0
+#define JS_NUMBER_BUFFER_SIZE 70 ///< Enough for 64 bit base 2 + minus + terminating 0
+
+#define JS_MAX_FUNCTION_ARGUMENTS 256 ///< How many arguments can be used with Function.apply
 
 /* If we have less free variables than this, do a garbage collect on Idle.
  * Note that the check for free variables takes an amount of time proportional
@@ -237,13 +302,6 @@ typedef int64_t JsSysTime;
 #else
 #define JS_VARS_BEFORE_IDLE_GC 32
 #endif
-
-
-#define JSPARSE_MAX_SCOPES  8
-
-#define STRINGIFY_HELPER(x) #x
-#define STRINGIFY(x) STRINGIFY_HELPER(x)
-#define NOT_USED(x) ( (void)(x) )
 
 // javascript specific names
 #define JSPARSE_RETURN_VAR "return" // variable name used for returning function results
@@ -260,6 +318,7 @@ typedef int64_t JsSysTime;
 #define JSPARSE_FUNCTION_LINENUMBER_NAME JS_HIDDEN_CHAR_STR"lin" // The line number offset of the function
 #define JS_EVENT_PREFIX "#on"
 #define JS_TIMEZONE_VAR "tz"
+#define JS_GRAPHICS_VAR "gfx"
 
 #define JSPARSE_EXCEPTION_VAR "except" // when exceptions are thrown, they're stored in the root scope
 #define JSPARSE_STACKTRACE_VAR "sTrace" // for errors/exceptions, a stack trace is stored as a string
@@ -344,7 +403,7 @@ typedef int64_t JsSysTime;
 #define NIBBLEFIELD_CLEAR(BITFIELD) memset(BITFIELD, 0, sizeof(BITFIELD)) ///< Clear all elements
 */
 
-#if defined(NRF51)
+#if defined(NRF51_SERIES)
   // Cortex-M0 does not support unaligned reads
   #define UNALIGNED_UINT16(addr) ((((uint16_t)*((uint8_t*)(addr)+1)) << 8) | (*(uint8_t*)(addr)))
 #else
@@ -355,19 +414,27 @@ bool isWhitespace(char ch);
 bool isNumeric(char ch);
 bool isHexadecimal(char ch);
 bool isAlpha(char ch);
-
-
 bool isIDString(const char *s);
 
+char charToUpperCase(char ch);
+char charToLowerCase(char ch);
+
 /** escape a character - if it is required. This may return a reference to a static array,
-so you can't store the value it returns in a variable and call it again. */
-const char *escapeCharacter(char ch);
+so you can't store the value it returns in a variable and call it again.
+If jsonStyle=true, only string escapes supported by JSON are used */
+const char *escapeCharacter(char ch, bool jsonStyle);
 /** Parse radix prefixes, or return 0 */
-int getRadix(const char **s, int forceRadix, bool *hasError);
+int getRadix(const char **s,  bool *hasError);
 /// Convert a character to the hexadecimal equivalent (or -1)
 int chtod(char ch);
-/* convert a number in the given radix to an int. if radix=0, autodetect */
-long long stringToIntWithRadix(const char *s, int radix, bool *hasError);
+/// Convert 2 characters to the hexadecimal equivalent (or -1)
+int hexToByte(char hi, char lo);
+/* convert a number in the given radix to an int */
+long long stringToIntWithRadix(const char *s,
+               int forceRadix, //!< if radix=0, autodetect
+               bool *hasError, //!< If nonzero, set to whether there was an error or not
+               const char **endOfInteger //!<  If nonzero, this is set to the point at which the integer finished in the string
+               );
 /* convert hex, binary, octal or decimal string into an int */
 long long stringToInt(const char *s);
 
@@ -384,6 +451,22 @@ typedef enum {
 } JsExceptionType;
 
 void jsAssertFail(const char *file, int line, const char *expr);
+
+#define DBG_INFO 0
+#define DBG_VERBOSE 1
+
+/*
+#if defined(DEBUG) || __FILE__ == DEBUG_FILE
+   #define jsDebug(dbg_type, format, ...) jsiConsolePrintf("[" __FILE__ "]:" format, ## __VA_ARGS__) 
+ #else 
+   #define jsDebug(dbg_type, format, ...) do { } while(0) 
+ #endif
+ */
+#if (defined DEBUG ) ||  ( defined __FILE__ == DEBUG_FILE)
+  #define jsDebug(dbg_type, format, ...) jsiConsolePrintf("[" __FILE__ "]:" format, ## __VA_ARGS__) 
+#else 
+  #define jsDebug(dbg_type, format, ...) do { } while(0) 
+#endif
 
 #ifndef USE_FLASH_MEMORY
 // Normal functions thet place format string in ram
@@ -430,7 +513,14 @@ typedef enum {
  * but which are good to know about */
 extern volatile JsErrorFlags jsErrorFlags;
 
-JsVarFloat stringToFloatWithRadix(const char *s, int forceRadix);
+/** Convert a string to a JS float variable where the string is of a specific radix. */
+JsVarFloat stringToFloatWithRadix(
+    const char *s, //!< The string to be converted to a float
+    int forceRadix, //!< The radix of the string data, or 0 to guess
+    const char **endOfFloat //!< If nonzero, this is set to the point at which the float finished in the string
+  );
+
+/** convert a string to a floating point JS variable. */
 JsVarFloat stringToFloat(const char *str);
 
 void itostr_extra(JsVarInt vals,char *str,bool signedVal,unsigned int base); // like itoa, but uses JsVarInt (good on non-32 bit systems)
@@ -450,21 +540,24 @@ JsVarFloat wrapAround(JsVarFloat val, JsVarFloat size);
 
 
 typedef void (*vcbprintf_callback)(const char *str, void *user_data);
-/** Espruino-special printf with a callback
- * Supported are:
- *   %d = int
- *   %0#d = int padded to length # with 0s
- *   %x = int as hex
- *   %L = JsVarInt
- *   %Lx = JsVarInt as hex
- *   %f = JsVarFloat
- *   %s = string (char *)
- *   %c = char
- *   %v = JsVar * (doesn't have to be a string - it'll be converted)
- *   %q = JsVar * (in quotes, and escaped)
- *   %j = Variable printed as JSON
- *   %t = Type of variable
- *   %p = Pin
+/**
+ * Espruino-special printf with a callback.
+ *
+ * The supported format specifiers are:
+ * * `%d` = int
+ * * `%0#d` or `%0#x` = int padded to length # with 0s
+ * * `%x` = int as hex
+ * * `%L` = JsVarInt
+ * * `%Lx`= JsVarInt as hex
+ * * `%f` = JsVarFloat
+ * * `%s` = string (char *)
+ * * `%c` = char
+ * * `%v` = JsVar * (doesn't have to be a string - it'll be converted)
+ * * `%q` = JsVar * (in quotes, and escaped)
+ * * `%Q` = JsVar * (in quotes, and escaped the JSON subset of escape chars)
+ * * `%j` = Variable printed as JSON
+ * * `%t` = Type of variable
+ * * `%p` = Pin
  *
  * Anything else will assert
  */
@@ -472,6 +565,9 @@ void vcbprintf(vcbprintf_callback user_callback, void *user_data, const char *fm
 
 /// This one is directly usable..
 void cbprintf(vcbprintf_callback user_callback, void *user_data, const char *fmt, ...);
+
+/// a snprintf replacement so mbedtls doesn't try and pull in the whole stdlib to cat two strings together
+int espruino_snprintf_va( char * s, size_t n, const char * fmt, va_list argp );
 
 /// a snprintf replacement so mbedtls doesn't try and pull in the whole stdlib to cat two strings together
 int espruino_snprintf( char * s, size_t n, const char * fmt, ... );
@@ -483,7 +579,20 @@ int rand();
 /// a rand() replacement that doesn't need malloc (!!!)
 void srand(unsigned int seed);
 
+/// Clip X between -128 and 127
+char clipi8(int x);
+
+/// Convert the given value to a signed integer assuming it has the given number of bits
+int twosComplement(int val, unsigned char bits);
+
+/// quick integer square root
+unsigned short int int_sqrt32(unsigned int x);
+
 /** get the amount of free stack we have, in bytes */
 size_t jsuGetFreeStack();
+
+#ifdef ESP32
+  void *espruino_stackHighPtr;  //Used by jsuGetFreeStack
+#endif
 
 #endif /* JSUTILS_H_ */

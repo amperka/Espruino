@@ -27,7 +27,7 @@ typedef long long int64_t;
 #include <jsinteractive.h>
 #include <jswrap_esp8266_network.h>
 #include <jswrap_esp8266.h>
-#include <ota.h>
+#include "jswrapper.h"
 #include <log.h>
 #include "ESP8266_board.h"
 
@@ -90,6 +90,10 @@ char *flash_maps[] = { // used in jswrap_ESP8266_network.c
   "512KB:256/256", "256KB", "1MB:512/512", "2MB:512/512", "4MB:512/512",
   "2MB:1024/1024", "4MB:1024/1024"
 };
+char *flash_maps_alt[] = { // used in jswrap_ESP8266_network.c
+  "512KB:256/256", "256KB", "1MB:1024", "2MB:1024", "4MB:512/512",
+  "2MB:1024/1024", "4MB:1024/1024"
+};
 uint16_t flash_kb[] = { // used in jswrap_ESP8266_network.c
   512, 256, 1024, 2048, 4096, 2048, 4096,
 };
@@ -122,8 +126,9 @@ void jshPrintBanner() {
   os_printf("Espruino "JS_VERSION"\nFlash map %s, manuf 0x%lx chip 0x%lx\n",
       flash_maps[map], (long unsigned int) (fid & 0xff), (long unsigned int)chip);
   jsiConsolePrintf(
-    "Flash map %s, manuf 0x%x chip 0x%x\n",
-    flash_maps[map], fid & 0xff, chip);
+    "Flash map %s, manuf 0x%x chip 0x%x\n", 
+    (( map == 2  && flash_kb[map] == 1024  && ESP_COMBINED_SIZE >= 1024) ? flash_maps_alt[map] : flash_maps[map]),
+    fid & 0xff, chip);
   if ((chip == 0x4013 && map != 0) || (chip == 0x4016 && map != 4 && map != 6)) {  
     jsiConsolePrint("WARNING: *** Your flash chip does not match your flash map ***\n");
   }
@@ -227,8 +232,7 @@ static void mainLoop() {
 #endif
 
   // Setup for another callback
-  //queueTaskMainLoop();
-  suspendMainLoop(0); // HACK to get around SDK 1.4 bug
+  queueTaskMainLoop();
 }
 
 
@@ -239,16 +243,23 @@ static void mainLoop() {
  */
 static void initDone() {
   os_printf("> initDone\n");
-  otaInit(88);
 
-  extern void gdbstub_init();
-  gdbstub_init();
+#ifndef NO_FOTA
+  #include <ota.h>
+  otaInit(88);
+#endif
+
+#ifdef DEBUG
+   extern void gdbstub_init();
+   gdbstub_init();
+#endif
 
   // Discard any junk data in the input as this is a boot.
   //uart_rx_discard();
 
   jshInit(); // Initialize the hardware
-  jsvInit(); // Initialize the variables
+  jswHWInit();
+  jsvInit(0); // Initialize the variables
   jsiInit(true); // Initialize the interactive subsystem
   // note: the wifi gets hooked-up via wifi_soft_init called from jsiInit
 
@@ -256,6 +267,12 @@ static void initDone() {
   system_os_task(eventHandler, TASK_APP_QUEUE, taskAppQueue, TASK_QUEUE_LENGTH);
 
   // At this point, our JavaScript environment should be up and running.
+
+  jswrap_wifi_restore();
+
+#ifdef RELEASE
+  jswrap_ESP8266_logDebug(false);
+#endif
 
   // Register the idle callback handler to run the main loop
   //ets_set_idle_cb(idle_cb, NULL); //
@@ -287,7 +304,7 @@ void user_uart_init() {
  * before user_init() is called.
  */
 void user_rf_pre_init() {
-  system_update_cpu_freq(160);
+  system_update_cpu_freq(CLOCK_SPEED_MHZ);
 // RF calibration: 0=do what byte 114 of esp_init_data_default says, 1=calibrate VDD33 and TX
   // power (18ms); 2=calibrate VDD33 only (2ms); 3=full calibration (200ms). The default value of
   // byte 114 is 0, which has the same effect as option 2 here. We're using option 3 'cause it's
@@ -302,18 +319,35 @@ void user_rf_pre_init() {
 /**
  * user_rf_cal_sector_set is a required function that is called by the SDK to get a flash
  * sector number where it can store RF calibration data. This was introduced with SDK 1.5.4.1
- * and is necessary because Espressif ran out of pre-reserved flash sectors. Ooops...
- */
-uint32
-user_rf_cal_sector_set(void) {
-  uint32_t sect = 0;
+ *
+ * sector map for last 5 sectors for flash: ABCCC
+ *   A : rf cal
+ *   B : rf init data
+ *   C : sdk parameters
+*/
+uint32 user_rf_cal_sector_set(void) {
+  uint32_t rf_cal_sec = 0;
   switch (system_get_flash_size_map()) {
-  case FLASH_SIZE_4M_MAP_256_256: // 512KB
-    sect = 128 - 10; // 0x76000
-  default:
-    sect = 128; // 0x80000
+    case FLASH_SIZE_4M_MAP_256_256: 
+      rf_cal_sec = 128 - 5; 
+      break;
+    case FLASH_SIZE_8M_MAP_512_512:
+      rf_cal_sec = 256 - 5;
+      break;
+    case FLASH_SIZE_16M_MAP_512_512:
+    case FLASH_SIZE_16M_MAP_1024_1024:
+        rf_cal_sec = 512 - 5;
+        break;
+    case FLASH_SIZE_32M_MAP_512_512:
+    case FLASH_SIZE_32M_MAP_1024_1024:
+      rf_cal_sec = 1024 - 5;
+      break;
+
+    default:
+      rf_cal_sec = 0;
+      break;
   }
-  return sect;
+  return rf_cal_sec;
 }
 
 /**

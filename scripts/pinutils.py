@@ -114,9 +114,16 @@ URLS = {
  "JTAG":"/AdvancedDebug"
 };
 
+# LED/Button devices
 SIMPLE_DEVICES = [
  "LED1","LED2","LED3","LED4","LED5","LED6","LED7","LED8",
  "BTN1","BTN2","BTN3","BTN4","BTN5","BTN6","BTN7","BTN8" ];
+
+# Devices with pins that we should leave alone at reset time
+OTHER_DEVICES = [
+  "USB","SD","LCD","JTAG","ESP8266","IR","GPS","BAT","HEARTRATE",
+  "ACCEL","MAG","TEMP","PRESSURE","SPIFLASH","TOUCH","VIBRATE","MISC"
+];
 
 # is a pin name valid
 def isvalidpin(pinname):
@@ -239,9 +246,10 @@ def only_from_package(pins, package):
   newpins = []
   for pin in pins:
 #    print json.dumps(pin)
-    pinnumber =  pin["csv"][package]
-    if pinnumber!="" and pinnumber!="0":
-      newpins.append(pin)
+    if "csv" in pin:
+      pinnumber =  pin["csv"][package]
+      if pinnumber!="" and pinnumber!="0":
+        newpins.append(pin)
   return newpins
 
 def get_device_pins(board):

@@ -89,7 +89,7 @@ typedef union UtilTimerTaskData {
 } UtilTimerTaskData;
 
 typedef struct UtilTimerTask {
-  JsSysTime time; // time at which to set pins
+  int time; // time in future (not system time) at which to set pins (JshSysTime scaling, cropped to 32 bits)
   unsigned int repeatInterval; // if nonzero, repeat the timer
   UtilTimerTaskData data; // data used when timer is hit
   UtilTimerEventType type; // the type of this task - do we set pin(s) or read/write data
@@ -103,20 +103,27 @@ void jstUtilTimerWaitEmpty();
 /// Return true if the utility timer is running
 bool jstUtilTimerIsRunning();
 
+/// Get the current timer offset - supply this when adding >1 timer task to ensure they are all executed at the same time relative to each other
+uint32_t jstGetUtilTimerOffset();
+
 /// Return true if a timer task for the given pin exists (and set 'task' to it)
 bool jstGetLastPinTimerTask(Pin pin, UtilTimerTask *task);
 
 /// Return true if a timer task for the given variable exists (and set 'task' to it)
 bool jstGetLastBufferTimerTask(JsVar *var, UtilTimerTask *task);
 
-/// returns false if timer queue was full... Changes the state of one or more pins at a certain time (using a timer)
-bool jstPinOutputAtTime(JsSysTime time, Pin *pins, int pinCount, uint8_t value);
+/** returns false if timer queue was full... Changes the state of one or more pins at a certain time in the future (using a timer)
+ * See utilTimerInsertTask for notes on timerOffset
+ */
+bool jstPinOutputAtTime(JsSysTime time, uint32_t *timerOffset, Pin *pins, int pinCount, uint8_t value);
 
 // Do software PWM on the given pin, using the timer IRQs
 bool jstPinPWM(JsVarFloat freq, JsVarFloat dutyCycle, Pin pin);
 
-/// Execute the given function repeatedly after the given time period. If periof=0, don't repeat
-bool jstExecuteFn(UtilTimerTaskExecFn fn, void *userdata, JsSysTime startTime, uint32_t period);
+/** Execute the given function repeatedly after the given time period. If period=0, don't repeat. True on success or false on failure to schedule
+ * See utilTimerInsertTask for notes on timerOffset
+ */
+bool jstExecuteFn(UtilTimerTaskExecFn fn, void *userdata, JsSysTime startTime, uint32_t period, uint32_t *timerOffset);
 
 /// Stop executing the given function
 bool jstStopExecuteFn(UtilTimerTaskExecFn fn, void *userdata);
@@ -138,17 +145,30 @@ bool jstStopBufferTimerTask(JsVar *var);
 /// Stop ALL timer tasks (including digitalPulse - use this when resetting the VM)
 void jstReset();
 
+/** when system time is changed, also change the time in the timers.
+This should be done with interrupts off */
+void jstSystemTimeChanged(JsSysTime diff);
+
 /// Dump the current list of timers
 void jstDumpUtilityTimers();
 
-// Queue a task up to be executed when a timer fires... return false on failure
-bool utilTimerInsertTask(UtilTimerTask *task);
+/* Restart the utility timer with the right period. This should not normally
+need to be called by anything outside jstimer.c */
+void  jstRestartUtilTimer();
+
+/** Queue a task up to be executed when a timer fires... return false on failure.
+ * task.time is the delay at which to execute the task. If timerOffset!==NULL then
+ * task.time is relative to the time at which timerOffset=jstGetUtilTimerOffset().
+ * This allows pulse trains/etc to be scheduled in sync.
+ */
+bool utilTimerInsertTask(UtilTimerTask *task, uint32_t *timerOffset);
 
 /// Remove the task that that 'checkCallback' returns true for. Returns false if none found
 bool utilTimerRemoveTask(bool (checkCallback)(UtilTimerTask *task, void* data), void *checkCallbackData);
 
 /// If 'checkCallback' returns true for a task, set 'task' to it and return true. Returns false if none found
 bool utilTimerGetLastTask(bool (checkCallback)(UtilTimerTask *task, void* data), void *checkCallbackData, UtilTimerTask *task);
+
 
 #endif /* JSTIMER_H_ */
 

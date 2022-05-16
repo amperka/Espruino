@@ -102,7 +102,7 @@ JsVar *jswrap_url_parse(JsVar *url, bool parseQuery) {
   int charIdx = 0;
   int portNumber = 0;
   while (jsvStringIteratorHasChar(&it)) {
-    char ch = jsvStringIteratorGetChar(&it);
+    char ch = jsvStringIteratorGetCharAndNext(&it);
     if (ch == '/') {
       slashes++;
       if (pathStart<0) pathStart = charIdx;
@@ -125,8 +125,6 @@ JsVar *jswrap_url_parse(JsVar *url, bool parseQuery) {
     if (ch == '?' && pathStart>=0) {
       searchStart = charIdx;
     }
-
-    jsvStringIteratorNext(&it);
     charIdx++;
   }
   jsvStringIteratorFree(&it);
@@ -165,7 +163,7 @@ JsVar *jswrap_url_parse(JsVar *url, bool parseQuery) {
     bool hadEquals = false;
 
     while (jsvStringIteratorHasChar(&it)) {
-      char ch = jsvStringIteratorGetChar(&it);
+      char ch = jsvStringIteratorGetCharAndNext(&it);
       if (ch=='&') {
         if (jsvGetStringLength(key)>0 || jsvGetStringLength(val)>0) {
           key = jsvAsArrayIndexAndUnLock(key); // make sure "0" gets made into 0
@@ -181,16 +179,14 @@ JsVar *jswrap_url_parse(JsVar *url, bool parseQuery) {
       } else {
         // decode percent escape chars
         if (ch=='%') {
-          jsvStringIteratorNext(&it);
-          ch = jsvStringIteratorGetChar(&it);
-          jsvStringIteratorNext(&it);
-          ch = (char)((chtod(ch)<<4) | chtod(jsvStringIteratorGetChar(&it)));
+          char hi = jsvStringIteratorGetCharAndNext(&it);
+          char lo = jsvStringIteratorGetCharAndNext(&it);
+          ch = (char)hexToByte(hi,lo);
         }
 
         if (hadEquals) jsvAppendCharacter(val, ch);
         else jsvAppendCharacter(key, ch);
       }
-      jsvStringIteratorNext(&it);
       charIdx++;
     }
     jsvStringIteratorFree(&it);
@@ -404,6 +400,18 @@ JsVar *jswrap_net_connect(JsVar *options, JsVar *callback, SocketType socketType
     return 0;
   }
 
+  if ((socketType&ST_TYPE_MASK) == ST_UDP) {
+    JsNetwork net;
+    if (networkGetFromVar(&net)) {
+      int recvBufferSize = jsvGetIntegerAndUnLock(jsvObjectGetChild(options, "recvBufferSize", 0));
+      if (recvBufferSize > net.data.recvBufferSize) {
+        net.data.recvBufferSize = recvBufferSize;
+        networkSet(&net);
+      }
+      networkFree(&net);
+    }
+  }
+
   JsVar *rq = clientRequestNew(socketType, options, callback);
   if (unlockOptions) jsvUnLock(options);
 
@@ -435,7 +443,7 @@ This is designed to be a cut-down version of the [node.js library](http://nodejs
   "name" : "createSocket",
   "generate_full" : "jswrap_dgram_createSocket(type, callback)",
   "params" : [
-    ["type","JsVar","Socket type to create e.g. 'udp4'"],
+    ["type","JsVar","Socket type to create e.g. 'udp4'. Or options object { type: 'udp4', reuseAddr: true, recvBufferSize: 1024 }"],
     ["callback","JsVar","A `function(sckt)` that will be called  with the socket when a connection is made. You can then call `sckt.send(...)` to send data, and `sckt.on('message', function(data) { ... })` and `sckt.on('close', function() { ... })` to deal with the response."]
   ],
   "return" : ["JsVar","Returns a new dgram.Socket object"],
@@ -518,22 +526,6 @@ void jswrap_dgram_socket_send(JsVar *parent, JsVar *buffer, JsVar *offset, JsVar
 }
 The 'message' event is called when a datagram message is received. If a handler is defined with `X.on('message', function(msg) { ... })` then it will be called`
 */
-void jswrap_dgram_messageCallback(JsVar *parent, JsVar *msg, JsVar *rinfo) {
-  assert(jsvIsObject(parent));
-  assert(jsvIsString(msg));
-  assert(jsvIsObject(rinfo));
-
-  JsVar *callback = jsvFindChildFromString(parent, DGRAM_MESSAGE_CALLBACK_NAME, false);
-  if (callback) {
-    JsVar *args[] = { msg, rinfo };
-    if (!jsiExecuteEventCallback(parent, callback, 2, args)) {
-      jsError("Error processing Datagram message handler - removing it.");
-      jsErrorFlags |= JSERR_CALLBACK;
-      jsvObjectRemoveChild(parent, DGRAM_MESSAGE_CALLBACK_NAME);
-    }
-    jsvUnLock(callback);
-  }
-}
 
 /*JSON{
   "type" : "method",

@@ -18,7 +18,7 @@
 #include "jsflags.h"
 
 #define JS_FS_DATA_NAME JS_HIDDEN_CHAR_STR"FSd" // the data in each file
-#define JS_FS_OPEN_FILES_NAME JS_HIDDEN_CHAR_STR"FSo" // the list of open files
+#define JS_FS_OPEN_FILES_NAME "FSopen" // the list of open files
 #if !defined(LINUX) && !defined(USE_FILESYSTEM_SDIO) && !defined(USE_FLASHFS)
 #define SD_CARD_ANYWHERE
 #endif
@@ -239,6 +239,7 @@ static bool allocateJsFile(JsFile* file,FileMode mode, FileType type) {
 
   JsVar *data = jsvNewFlatStringOfLength(sizeof(JsFileData));
   if (!data) { // out of memory for flat string
+    jsErrorFlags |= JSERR_LOW_MEMORY; // flag this up as an issue
     jsvUnLock(parent);
     return false;
   }
@@ -401,6 +402,7 @@ all files you are writing before power is lost or you will
 cause damage to your SD card's filesystem.
 */
 size_t jswrap_file_write(JsVar* parent, JsVar* buffer) {
+  if (!buffer) return 0;
   FRESULT res = 0;
   size_t bytesWritten = 0;
   if (jsfsInit()) {
@@ -603,9 +605,11 @@ Before first use the media needs to be formatted.
 
 ```
 fs=require("fs");
-if ( typeof(fs.readdirSync())==="undefined" ) {
-  console.log("Formatting FS");
-  E.flashFatFS({format:true});
+try {
+  fs.readdirSync();
+ } catch (e) { //'Uncaught Error: Unable to mount media : NO_FILESYSTEM'
+  console.log('Formatting FS - only need to do once');
+  E.flashFatFS({ format: true });
 }
 fs.writeFileSync("bang.txt", "This is the way the world ends\nnot with a bang but a whimper.\n");
 fs.readdirSync();
@@ -646,7 +650,7 @@ int jswrap_E_flashFatFS(JsVar* options) {
   if (init) {
     if ( format ) {
       uint8_t res = f_mount(&jsfsFAT, "", 0);
-      jsDebug("Formatting Flash");
+      jsDebug(DBG_INFO,"Formatting Flash");
       res = f_mkfs("", 1, 0);  // Super Floppy format, using all space (not partition table)
       if (res != FR_OK) {
         jsExceptionHere(JSET_INTERNALERROR, "Flash Formatting error:",res);

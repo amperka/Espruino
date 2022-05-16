@@ -129,7 +129,7 @@ JsVar *jswrap_object_toString(JsVar *parent, JsVar *arg0) {
       return jsvNewFromString(buf);
     }
   }
-  return jsvAsString(parent, false);
+  return jsvAsString(parent);
 }
 
 /*JSON{
@@ -142,6 +142,7 @@ JsVar *jswrap_object_toString(JsVar *parent, JsVar *arg0) {
 Copy this object completely
  */
 JsVar *jswrap_object_clone(JsVar *parent) {
+  if (!parent) return 0;
   return jsvCopy(parent, true);
 }
 
@@ -171,7 +172,7 @@ Returns an array of all properties (enumerable or not) found directly on a given
 */
 
 
-void _jswrap_object_keys_or_property_names_iterator(
+static void _jswrap_object_keys_or_property_names_iterator(
     const JswSymList *symbols,
     void (*callback)(void *data, JsVar *name),
     void *data) {
@@ -204,6 +205,7 @@ void jswrap_object_keys_or_property_names_cb(
     void (*callback)(void *data, JsVar *name),
     void *data
 ) {
+  // add the keys that are on this object itself
   // strings are iterable, but we shouldn't try and show keys for them
   if (jsvIsIterable(obj)) {
     JsvIsInternalChecker checkerFunction = jsvGetInternalFunctionCheckerFor(obj);
@@ -232,6 +234,8 @@ void jswrap_object_keys_or_property_names_cb(
      Assume that ALL builtins are non-enumerable. This isn't great but
      seems to work quite well right now! */
   if (includeNonEnumerable) {
+    const JswSymList *objSymbols = jswGetSymbolListForObjectProto(0);
+
     JsVar *protoOwner = jspGetPrototypeOwner(obj);
     if (protoOwner) {
       // If protoOwner then this is the prototype (protoOwner is the object)
@@ -245,23 +249,22 @@ void jswrap_object_keys_or_property_names_cb(
     }
 
     if (includePrototype) {
+      JsVar *proto = 0;
       if (jsvIsObject(obj) || jsvIsFunction(obj)) {
-        JsVar *proto = jsvObjectGetChild(obj, JSPARSE_INHERITS_VAR, 0);
-        while (jsvIsObject(proto)) {
-          const JswSymList *symbols = jswGetSymbolListForObjectProto(proto);
-          _jswrap_object_keys_or_property_names_iterator(symbols, callback, data);
-          JsVar *p2 = jsvObjectGetChild(proto, JSPARSE_INHERITS_VAR, 0);
-          jsvUnLock(proto);
-          proto = p2;
-        }
+        proto = jsvObjectGetChild(obj, JSPARSE_INHERITS_VAR, 0);
       }
-      // include Object/String/etc
-      const JswSymList *symbols = jswGetSymbolListForObjectProto(obj);
-      _jswrap_object_keys_or_property_names_iterator(symbols, callback, data);
-      // if the last call wasn't an Object, add the object proto as well
-      const JswSymList *objSymbols = jswGetSymbolListForObjectProto(0);
-      if (objSymbols!=symbols)
-        _jswrap_object_keys_or_property_names_iterator(objSymbols, callback, data);
+
+      if (jsvIsObject(proto)) {
+        jswrap_object_keys_or_property_names_cb(proto, includeNonEnumerable, includePrototype, callback, data);
+      } else {
+        // include Object/String/etc
+        const JswSymList *symbols = jswGetSymbolListForObjectProto(obj);
+        _jswrap_object_keys_or_property_names_iterator(symbols, callback, data);
+        // if the last call wasn't an Object, add the object proto as well
+        if (objSymbols!=symbols)
+          _jswrap_object_keys_or_property_names_iterator(objSymbols, callback, data);
+      }
+      jsvUnLock(proto);
     }
 
     if (jsvIsArray(obj) || jsvIsString(obj)) {
@@ -356,18 +359,27 @@ JsVar *jswrap_object_getOwnPropertyDescriptor(JsVar *parent, JsVar *name) {
     return 0;
   }
 
-  //jsvTrace(varName, 5);
-  JsVar *var = jsvSkipName(varName);
-
   bool isBuiltIn = jsvIsNewChild(varName);
   JsvIsInternalChecker checkerFunction = jsvGetInternalFunctionCheckerFor(parent);
 
-  jsvObjectSetChild(obj, "value", var);
+
   jsvObjectSetChildAndUnLock(obj, "writable", jsvNewFromBool(true));
   jsvObjectSetChildAndUnLock(obj, "enumerable", jsvNewFromBool(!checkerFunction || !checkerFunction(varName)));
   jsvObjectSetChildAndUnLock(obj, "configurable", jsvNewFromBool(!isBuiltIn));
+#ifndef SAVE_ON_FLASH
+  JsVar *getset = jsvGetValueOfName(varName);
+  if (jsvIsGetterOrSetter(getset)) {
+    jsvObjectSetChildAndUnLock(obj, "get", jsvObjectGetChild(getset,"get",0));
+    jsvObjectSetChildAndUnLock(obj, "set", jsvObjectGetChild(getset,"set",0));
+  } else {
+#endif
+    jsvObjectSetChildAndUnLock(obj, "value", jsvSkipName(varName));
+#ifndef SAVE_ON_FLASH
+  }
+  jsvUnLock(getset);
+#endif
 
-  jsvUnLock2(var, varName);
+  jsvUnLock(varName);
   return obj;
 }
 
@@ -430,14 +442,15 @@ bool jswrap_object_hasOwnProperty(JsVar *parent, JsVar *name) {
 }
 Add a new property to the Object. 'Desc' is an object with the following fields:
 
-* `configurable` (bool = false) - can this property be changed/deleted
-* `enumerable` (bool = false) - can this property be enumerated
+* `configurable` (bool = false) - can this property be changed/deleted (not implemented)
+* `enumerable` (bool = false) - can this property be enumerated (not implemented)
 * `value` (anything) - the value of this property
-* `writable` (bool = false) - can the value be changed with the assignment operator?
-* `get` (function) - the getter function, or undefined if no getter
-* `set` (function) - the setter function, or undefined if no setter
-*
-**Note:** `configurable`, `enumerable`, `writable`, `get`, and `set` are not implemented and will be ignored.
+* `writable` (bool = false) - can the value be changed with the assignment operator? (not implemented)
+* `get` (function) - the getter function, or undefined if no getter (only supported on some platforms)
+* `set` (function) - the setter function, or undefined if no setter (only supported on some platforms)
+
+**Note:** `configurable`, `enumerable` and `writable` are not implemented and will be ignored.
+
  */
 JsVar *jswrap_object_defineProperty(JsVar *parent, JsVar *propName, JsVar *desc) {
   if (!jsvIsObject(parent)) {
@@ -450,7 +463,25 @@ JsVar *jswrap_object_defineProperty(JsVar *parent, JsVar *propName, JsVar *desc)
   }
 
   JsVar *name = jsvAsArrayIndex(propName);
-  JsVar *value = jsvObjectGetChild(desc, "value", 0);
+  JsVar *value = 0;
+
+  JsVar *getter = jsvObjectGetChild(desc, "get", 0);
+  JsVar *setter = jsvObjectGetChild(desc, "set", 0);
+  if (getter || setter) {
+#ifdef SAVE_ON_FLASH
+    jsExceptionHere(JSET_ERROR, "get/set unsupported in this build");
+#else
+    // also see jsvAddGetterOrSetter(contents, varName, isGetter, method);
+    value = jsvNewWithFlags(JSV_GET_SET);
+    if (value) {
+      if (getter) jsvObjectSetChild(value, "get", getter);
+      if (setter) jsvObjectSetChild(value, "set", setter);
+    }
+#endif
+    jsvUnLock2(getter,setter);
+  }
+  if (!value) value = jsvObjectGetChild(desc, "value", 0);
+
   jsvObjectSetChildVar(parent, name, value);
   jsvUnLock2(name, value);
 
@@ -525,7 +556,7 @@ Set the prototype of the given object - this is like writing
 `object.__proto__ = prototype` but is the 'proper' ES6 way of doing it
  */
 JsVar *jswrap_object_setPrototypeOf(JsVar *object, JsVar *proto) {
-  JsVar *v = jsvIsObject(object) ? jspGetNamedField(object, "__proto__", true) : 0;
+  JsVar *v = (jsvIsFunction(object)||jsvIsObject(object)) ? jsvFindChildFromString(object, "__proto__", true) : 0;
   if (!jsvIsName(v)) {
     jsExceptionHere(JSET_TYPEERROR, "Can't extend %t\n", v);
   } else {
@@ -616,7 +647,40 @@ void jswrap_object_addEventListener(JsVar *parent, const char *eventName, void (
     ["listener","JsVar","The listener to call when this event is received"]
   ]
 }
-Register an event listener for this object, for instance ```http.on('data', function(d) {...})```. See Node.js's EventEmitter.
+Register an event listener for this object, for instance `Serial1.on('data', function(d) {...})`.
+
+This is the same as Node.js's [EventEmitter](https://nodejs.org/api/events.html) but on Espruino
+the functionality is built into every object:
+
+* `Object.on`
+* `Object.emit`
+* `Object.removeListener`
+* `Object.removeAllListeners`
+
+```
+var o = {}; // o can be any object...
+// call an arrow function when the 'answer' event is received
+o.on('answer', x => console.log(x));
+// call a named function when the 'answer' event is received
+function printAnswer(d) {
+  console.log("The answer is", d);
+}
+o.on('answer', printAnswer);
+// emit the 'answer' event - functions added with 'on' will be executed
+o.emit('answer', 42);
+// prints: 42
+// prints: The answer is 42
+// If you have a named function, it can be removed by name
+o.removeListener('answer', printAnswer);
+// Now 'printAnswer' is removed
+o.emit('answer', 43);
+// prints: 43
+// Or you can remove all listeners for 'answer'
+o.removeAllListeners('answer')
+// Now nothing happens
+o.emit('answer', 44);
+// nothing printed
+```
  */
 void jswrap_object_on(JsVar *parent, JsVar *event, JsVar *listener) {
   if (!jsvHasChildren(parent)) {
@@ -677,7 +741,9 @@ void jswrap_object_on(JsVar *parent, JsVar *event, JsVar *listener) {
     ["args","JsVarArray","Optional arguments"]
   ]
 }
-Call the event listeners for this object, for instance ```http.emit('data', 'Foo')```. See Node.js's EventEmitter.
+Call any event listeners that were added to this object with `Object.on`, for instance `obj.emit('data', 'Foo')`.
+
+For more information see `Object.on`
  */
 void jswrap_object_emit(JsVar *parent, JsVar *event, JsVar *argArray) {
   if (!jsvHasChildren(parent)) {
@@ -736,6 +802,8 @@ function foo(d) {
 Serial1.on("data", foo);
 Serial1.removeListener("data", foo);
 ```
+
+For more information see `Object.on`
  */
 void jswrap_object_removeListener(JsVar *parent, JsVar *event, JsVar *callback) {
   if (!jsvHasChildren(parent)) {
@@ -776,10 +844,19 @@ void jswrap_object_removeListener(JsVar *parent, JsVar *event, JsVar *callback) 
   "name" : "removeAllListeners",
   "generate" : "jswrap_object_removeAllListeners",
   "params" : [
-    ["event","JsVar","The name of the event, for instance 'data'"]
+    ["event","JsVar","The name of the event, for instance `'data'`. If not specified *all* listeners are removed."]
   ]
 }
-Removes all listeners, or those of the specified event.
+Removes all listeners (if `event===undefined`), or those of the specified event.
+
+```
+Serial1.on("data", function(data) { ... });
+Serial1.removeAllListeners("data");
+// or
+Serial1.removeAllListeners(); // removes all listeners for all event types
+```
+
+For more information see `Object.on`
  */
 void jswrap_object_removeAllListeners(JsVar *parent, JsVar *event) {
   if (!jsvHasChildren(parent)) {
@@ -841,23 +918,23 @@ This replaces the function with the one in the argument - while keeping the old 
 This allows inner functions to be edited, and is used when edit() is called on an inner function.
  */
 void jswrap_function_replaceWith(JsVar *oldFunc, JsVar *newFunc) {
-  if (!jsvIsFunction(newFunc)) {
-    jsExceptionHere(JSET_TYPEERROR, "First argument of replaceWith should be a function - ignoring");
+  if ((!jsvIsFunction(oldFunc)) || (!jsvIsFunction(newFunc))) {
+    jsExceptionHere(JSET_TYPEERROR, "Argument should be a function");
     return;
   }
   // If old was native or vice versa...
   if (jsvIsNativeFunction(oldFunc) != jsvIsNativeFunction(newFunc)) {
     if (jsvIsNativeFunction(newFunc))
-      oldFunc->flags |= JSV_NATIVE;
+      oldFunc->flags = (oldFunc->flags&~JSV_VARTYPEMASK) | JSV_NATIVE_FUNCTION;
     else
-      oldFunc->flags &= ~JSV_NATIVE;
+      oldFunc->flags = (oldFunc->flags&~JSV_VARTYPEMASK) | JSV_FUNCTION;
   }
   // If old fn started with 'return' or vice versa...
   if (jsvIsFunctionReturn(oldFunc) != jsvIsFunctionReturn(newFunc)) {
     if (jsvIsFunctionReturn(newFunc))
-      oldFunc->flags = (oldFunc->flags&~JSV_VARTYPEMASK) |JSV_FUNCTION_RETURN;
+      oldFunc->flags = (oldFunc->flags&~JSV_VARTYPEMASK) | JSV_FUNCTION_RETURN;
     else
-      oldFunc->flags = (oldFunc->flags&~JSV_VARTYPEMASK) |JSV_FUNCTION;
+      oldFunc->flags = (oldFunc->flags&~JSV_VARTYPEMASK) | JSV_FUNCTION;
   }
 
   // Grab scope and prototype - the things we want to keep
@@ -865,9 +942,6 @@ void jswrap_function_replaceWith(JsVar *oldFunc, JsVar *newFunc) {
   JsVar *prototype = jsvFindChildFromString(oldFunc, JSPARSE_PROTOTYPE_VAR, false);
   // so now remove all existing entries
   jsvRemoveAllChildren(oldFunc);
-  // now re-add scope
-  if (scope) jsvAddName(oldFunc, scope);
-  jsvUnLock(scope);
   // now re-add other entries
   JsvObjectIterator it;
   jsvObjectIteratorNew(&it, newFunc);
@@ -885,6 +959,9 @@ void jswrap_function_replaceWith(JsVar *oldFunc, JsVar *newFunc) {
     jsvUnLock(el);
   }
   jsvObjectIteratorFree(&it);
+  // now re-add scope
+  if (scope) jsvAddName(oldFunc, scope);
+  jsvUnLock(scope);
   // re-add prototype (it needs to come after other hidden vars)
   if (prototype) jsvAddName(oldFunc, prototype);
   jsvUnLock(prototype);
@@ -926,8 +1003,8 @@ JsVar *jswrap_function_apply_or_call(JsVar *parent, JsVar *thisArg, JsVar *argsA
 
   if (jsvIsIterable(argsArray)) {
     argC = (unsigned int)jsvGetLength(argsArray);
-    if (argC>64) {
-      jsExceptionHere(JSET_ERROR, "Array passed to Function.apply is too big! Maximum 64 arguments, got %d", argC);
+    if (argC>JS_MAX_FUNCTION_ARGUMENTS) {
+      jsExceptionHere(JSET_ERROR, "Array passed to Function.apply is too big! Maximum "STRINGIFY(JS_MAX_FUNCTION_ARGUMENTS)" arguments, got %d", argC);
       return 0;
     }
     args = (JsVar**)alloca((size_t)argC * sizeof(JsVar*));
@@ -936,11 +1013,15 @@ JsVar *jswrap_function_apply_or_call(JsVar *parent, JsVar *thisArg, JsVar *argsA
     JsvIterator it;
     jsvIteratorNew(&it, argsArray, JSIF_EVERY_ARRAY_ELEMENT);
     while (jsvIteratorHasElement(&it)) {
-      JsVarInt idx = jsvGetIntegerAndUnLock(jsvIteratorGetKey(&it));
-      if (idx>=0 && idx<(int)argC) {
-        assert(!args[idx]); // just in case there were dups
-        args[idx] = jsvIteratorGetValue(&it);
+      JsVar *idxVar = jsvIteratorGetKey(&it);
+      if (jsvIsIntegerish(idxVar)) {
+        JsVarInt idx = jsvGetInteger(idxVar);
+        if (idx>=0 && idx<(int)argC) {
+          assert(!args[idx]); // just in case there were dups
+          args[idx] = jsvIteratorGetValue(&it);
+        }
       }
+      jsvUnLock(idxVar);
       jsvIteratorNext(&it);
     }
     jsvIteratorFree(&it);
@@ -1021,13 +1102,7 @@ JsVar *jswrap_function_bind(JsVar *parent, JsVar *thisArg, JsVar *argsArray) {
       }
 
       if (!addedParam) {
-        JsVar *paramName = jsvNewFromEmptyString();
-        if (paramName) {
-          jsvMakeFunctionParameter(paramName); // force this to be called a function parameter
-          jsvSetValueOfName(paramName, defaultValue);
-          jsvAddName(fn, paramName);
-          jsvUnLock(paramName);
-        }
+        jsvAddFunctionParameter(fn, 0, defaultValue);
       }
       jsvUnLock(defaultValue);
       jsvObjectIteratorNext(&argIt);
