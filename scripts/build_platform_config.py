@@ -263,13 +263,6 @@ codeOut("""
 #define SYSTICK_RANGE 0x1000000 // the Maximum (it is a 24 bit counter) - on Olimexino this is about 0.6 sec
 #define SYSTICKS_BEFORE_USB_DISCONNECT 2
 
-<<<<<<< HEAD
-// When to send the message that the IO buffer is getting full
-#define IOBUFFER_XOFF ((TXBUFFERMASK)*6/8)
-// When to send the message that we can start receiving again
-#define IOBUFFER_XON ((TXBUFFERMASK)*3/8)
-=======
->>>>>>> master
 #define DEFAULT_BUSY_PIN_INDICATOR (Pin)-1 // no indicator
 #define DEFAULT_SLEEP_PIN_INDICATOR (Pin)-1 // no indicator
 """);

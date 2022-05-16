@@ -18,8 +18,7 @@ BASEDIR=`pwd`
 
 BOARDNAME=ISKRAJS
 ESPRUINOFILE=`python scripts/get_board_info.py $BOARDNAME "common.get_board_binary_name(board)"`
-BOOTLOADERFILE=bootloader_$ESPRUINOFILE
-IMGFILE=espruino_iskrajs_full.bin
+IMGFILE=espruino_iskrajs.uf2
 rm -f $ESPRUINOFILE $BOOTLOADERFILE $IMGFILE
 
 export ISKRAJS=1
@@ -28,39 +27,14 @@ export BOARD=ISKRAJS
 # export DEBUG=1
 export RELEASE=1
 
-BOOTLOADER=1 make clean
-BOOTLOADER=1 make || { echo 'Build failed' ; exit 1; }
-
 make clean
-make || { echo 'Build failed' ; exit 1; }
+make || { echo 'Build failed (espruino)' ; exit 1; }
 
-BOOTLOADERSIZE=`python scripts/get_board_info.py $BOARDNAME "common.get_bootloader_size(board)"`
-IMGSIZE=$(expr $BOOTLOADERSIZE + $(stat -c%s "$ESPRUINOFILE"))
-
+echo Create UF2 file
 echo ---------------------
-echo Image Size = $IMGSIZE
+./scripts/uf2conv.py -c -b 0x08010000 -f STM32F4 $ESPRUINOFILE -o $IMGFILE  || { echo 'Build failed (uf2)' ; exit 1; }
 
 echo ---------------------
-echo Create blank image
-echo ---------------------
-tr "\000" "\377" < /dev/zero | dd bs=1 count=$IMGSIZE of=$IMGFILE || { echo 'Build failed' ; exit 1; }
-
-echo Add bootloader
-echo ---------------------
-dd bs=1 if=$BOOTLOADERFILE of=$IMGFILE conv=notrunc || { echo 'Build failed' ; exit 1; }
-
-echo Add espruino
-echo ---------------------
-dd bs=1 seek=$BOOTLOADERSIZE if=$ESPRUINOFILE of=$IMGFILE conv=notrunc || { echo 'Build failed' ; exit 1; }
-
-echo Add padding
-echo ---------------------
-dd if=/dev/null of=$IMGFILE bs=1 count=1 seek=1048576 # 1024*1024
-
-cp $IMGFILE $ESPRUINOFILE || { echo 'Build failed' ; exit 1; }
-echo ---------------------
-echo Finished! Written to $IMGFILE and copied to $ESPRUINOFILE
+echo Finished!
 echo ---------------------
 
-#echo python scripts/stm32loader.py -b 460800 -ewv $IMGFILE
-#python scripts/stm32loader.py -b 460800 -ewv $IMGFILE

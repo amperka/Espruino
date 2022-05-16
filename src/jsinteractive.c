@@ -855,7 +855,7 @@ void jsiSemiInit(bool autoLoad, JsfFileName *loadedFilename) {
           "/___//____//_/|_|/_/    \\__,_/\n"
           "\n"
           "Based on Espruino " JS_VERSION "\n"
-          "(c) 2018 G.Williams, Amperka LLC\n"
+          "(c) 2022 G.Williams, Amperka LLC\n"
           "Support the work of core developers:\n"
           "http://espruino.com/Donate\n"
 #else

@@ -91,14 +91,9 @@ void app_error_fault_handler(uint32_t id, uint32_t pc, uint32_t info) {
 #include "nrfx_spim.h"
 #endif
 
-<<<<<<< HEAD
-
-#define SYSCLK_FREQ 32768 // this really needs to be a bit higher :)
-=======
 #ifdef MICROBIT
 #include "jswrap_microbit.h"
 #endif
->>>>>>> master
 
 void WDT_IRQHandler() {
 }

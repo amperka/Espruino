@@ -18,19 +18,12 @@
 import pinutils;
 info = {
  'name' : "STM32L496 Discovery",
-<<<<<<< HEAD
- 'link' :  [ "http://www.st.com/content/st_com/en/products/evaluation-tools/product-evaluation-tools/mcu-eval-tools/mcu-eval-tools/stm32-mcu-eval-tools/stm32-mcu-discovery-kits/32l496gdiscovery.html" ],
- 'default_console' : "EV_USBSERIAL",
-
- 'variables' :  15359, 	# variables computed from available RAM size : (256-16)*1024/16-1
-=======
  'link' :  [ "http://www.st.com/en/evaluation-tools/32l496gdiscovery.html" ],
  'espruino_page_link' : 'STM32L496GDISCOVERY',
  'default_console' : "EV_SERIAL2",
  'default_console_tx' : "A2",
  'default_console_rx' : "D6",
  'variables' :  19200, 	# variables computed from available RAM size : (256-16)*1024/16-1
->>>>>>> master
  'binary_name' : 'espruino_%v_stm32l496gdiscovery.bin',
  'build' : {
    'optimizeflags' : '-O3',

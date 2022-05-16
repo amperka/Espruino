@@ -20,8 +20,9 @@ info = {
     'link' :  [ "http://amperka.ru/product/iskra-js" ],
     'default_console' : "EV_SERIAL2",
     'default_busy_pin_indicator' : "B7",
-    'variables' : 5450,
-    'bootloader' : 1,
+    'variables' : 7423, # (128-12)*1024/16-1
+    'bootloader' : 0,
+    'flash_base': 0x08010000,
     'binary_name' : 'espruino_%v_iskrajs.bin',
     'images_url_base': 'http://js.amperka.ru/img/',
     'binaries_url_base': 'http://js.amperka.ru/binaries/',
@@ -33,16 +34,18 @@ info = {
             'USB_HID',
             'NET',
             'GRAPHICS',
+            'TV',
             'FILESYSTEM',
             'WIZNET',
-            'CRYPTO',
-            'NEOPIXEL',
-            'TLS'
+            'CRYPTO','SHA256','SHA512',
+            'TLS',
+            'NEOPIXEL'
         ],
         'makefile' : [
             'DEFINES+=-DUSE_USB_OTG_FS=1',
             'STLIB=STM32F405xx',
-            'PRECOMPILED_OBJS+=$(ROOT)/targetlibs/stm32f4/lib/startup_stm32f40_41xxx.o'
+            'PRECOMPILED_OBJS+=$(ROOT)/targetlibs/stm32f4/lib/startup_stm32f40_41xxx.o',
+            'JSMODULESOURCES+=libs/js/AT.min.js'
         ]
     }
 }
@@ -51,8 +54,8 @@ chip = {
     'part' : "STM32F405RGT6",
     'family' : "STM32F4",
     'package' : "LQFP64",
-    'ram' : 192,
-    'flash' : 1024,
+    'ram' : 128,
+    'flash' : 1024 - 64,
     'speed' : 168,
     'usart' : 6,
     'spi' : 3,
