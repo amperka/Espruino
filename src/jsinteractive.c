@@ -848,14 +848,14 @@ void jsiSemiInit(bool autoLoad, JsfFileName *loadedFilename) {
 
 #ifdef ISKRAJS
           "\n"
-          "    ____       __\n"
-          "   /  _/_____ / /__ _____ ____ _\n"
-          "   / / / ___// //_// ___// __ `/\n"
-          " _/ / (__  )/ ,<  / /   / /_/ /\n"
-          "/___//____//_/|_|/_/    \\__,_/\n"
+          "    ____       __                    _______  \n"
+          "   /  _/_____ / /__ _____ ____ _    / / ___/  \n"
+          "   / / / ___// //_// ___// __ `/_  / /\\__ \\ \n"
+          " _/ / (__  )/ ,<  / /   / /_/ / /_/ /___/ /   \n"
+          "/___//____//_/|_|/_/    \\__,_/\\____//____/  \n"
           "\n"
           "Based on Espruino " JS_VERSION "\n"
-          "(c) 2022 G.Williams, Amperka LLC\n"
+          "(c) 2022 G.Williams, Amperka Robots LLC\n"
           "Support the work of core developers:\n"
           "http://espruino.com/Donate\n"
 #else

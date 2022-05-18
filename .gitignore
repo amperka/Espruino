@@ -8,6 +8,7 @@
 *.lst
 *.srec
 *.bin
+*.uf2
 *.pyc
 /*.bin.unpadded
 /*.zip
