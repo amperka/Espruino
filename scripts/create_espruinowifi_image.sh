@@ -61,4 +61,3 @@ echo ---------------------
 #echo python scripts/stm32loader.py -b 460800 -ewv $IMGFILE
 #python scripts/stm32loader.py -b 460800 -ewv $IMGFILE
 
-

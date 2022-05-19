@@ -661,10 +661,6 @@ ifdef USB
 DEFINES += -DUSB
 endif
 
-ifdef ISKRAJS
-WRAPPERSOURCES += targets/iskrajs/jswrap_iskrajs.c
-endif
-
 PININFOFILE=$(GENDIR)/jspininfo
 SOURCES += $(PININFOFILE).c
 

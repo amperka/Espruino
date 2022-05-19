@@ -18,13 +18,13 @@ cd `dirname $0` # scripts
 cd ..            # main dir
 BASEDIR=`pwd`
 
-BOARDNAME=ISKRAJS
+BOARDNAME=ISKRAJSMINI
 ESPRUINOFILE=`python scripts/get_board_info.py $BOARDNAME "common.get_board_binary_name(board)"`
-IMGFILE=espruino_iskrajs.uf2
+IMGFILE=espruino_iskrajs_mini.uf2
 rm -f $ESPRUINOFILE $BOOTLOADERFILE $IMGFILE
 
 export ISKRAJS=1
-export BOARD=ISKRAJS
+export BOARD=ISKRAJSMINI
 # export USB_PRODUCT_ID=0x5741 # For test harness board only
 # export DEBUG=1
 export RELEASE=1

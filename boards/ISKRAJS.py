@@ -2,6 +2,8 @@
 # This file is part of Espruino, a JavaScript interpreter for Microcontrollers
 #
 # Copyright (C) 2013 Gordon Williams <gw@pur3.co.uk>
+# Copyright (C) 2014 Victor Nakoryakov <victor@amperka.ru>
+# Copyright (C) 2022 Roman Samusevich (kekcheburec) for Amperka Robots LLC
 #
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -42,7 +44,9 @@ info = {
             'NEOPIXEL'
         ],
         'makefile' : [
+            'WRAPPERSOURCES+=targets/iskrajs/jswrap_iskrajs.c',
             'DEFINES+=-DUSE_USB_OTG_FS=1',
+            'DEFINES+=-DISKRAJS_LOGO',
             'STLIB=STM32F405xx',
             'PRECOMPILED_OBJS+=$(ROOT)/targetlibs/stm32f4/lib/startup_stm32f40_41xxx.o',
             'JSMODULESOURCES+=libs/js/AT.min.js'
@@ -85,14 +89,14 @@ devices = {
 }
 
 
-# TODO:
-board_css = """
+# TODO
+board["_css"] = """
 """;
 
 def get_pins():
     pins = pinutils.scan_pin_file([], 'stm32f40x.csv', 6, 9, 10)
     return pinutils.only_from_package(pinutils.fill_gaps_in_pin_list(pins), chip["package"])
 
-if __name__ == '__main__':
-    from pprint import pprint
-    pprint(get_pins())
+# if __name__ == '__main__':
+#     from pprint import pprint
+#     pprint(get_pins())

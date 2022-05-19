@@ -846,7 +846,7 @@ void jsiSemiInit(bool autoLoad, JsfFileName *loadedFilename) {
 #endif
           // rectangles @ http://www.network-science.de/ascii/
 
-#ifdef ISKRAJS
+#ifdef ISKRAJS_LOGO
           "\n"
           "    ____       __                    _______  \n"
           "   /  _/_____ / /__ _____ ____ _    / / ___/  \n"
