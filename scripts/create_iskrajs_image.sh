@@ -23,7 +23,7 @@ ESPRUINOFILE=`python scripts/get_board_info.py $BOARDNAME "common.get_board_bina
 IMGFILE=espruino_iskrajs.uf2
 rm -f $ESPRUINOFILE $BOOTLOADERFILE $IMGFILE
 
-export ISKRAJS=1
+# export ISKRAJS=1
 export BOARD=ISKRAJS
 # export USB_PRODUCT_ID=0x5741 # For test harness board only
 # export DEBUG=1
