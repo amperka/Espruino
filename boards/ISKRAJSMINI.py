@@ -24,7 +24,7 @@ info = {
  'default_console_rx' : "B7",
  'variables' : 7423, # (128-12)*1024/16-1
  'bootloader' : 0,
- 'flash_base': 0x08010000,
+ 'flash_base': 0x08008000,
  'binary_name' : 'espruino_%v_iskrajs_mini.bin',
  'build' : {
    'optimizeflags' : '-Os',
@@ -42,7 +42,7 @@ info = {
    'makefile' : [
      'DEFINES+=-DUSE_USB_OTG_FS=1',
      'DEFINES+=-DPIN_NAMES_DIRECT=1',
-     'DEFINES+=-DISKRAJS_LOGO',
+     'DEFINES+=-DISKRAJS_MINI_LOGO',
      'STLIB=STM32F411xE',
      'PRECOMPILED_OBJS+=$(ROOT)/targetlibs/stm32f4/lib/startup_stm32f401xx.o',
      'JSMODULESOURCES+=libs/js/AT.min.js',
@@ -55,7 +55,7 @@ chip = {
   'family' : "STM32F4",
   'package' : "UQFN48",
   'ram' : 128,
-  'flash' : 512 - 64,
+  'flash' : 512 - 32,
   'speed' : 100,
   'usart' : 6,
   'spi' : 3,

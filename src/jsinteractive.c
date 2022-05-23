@@ -846,13 +846,30 @@ void jsiSemiInit(bool autoLoad, JsfFileName *loadedFilename) {
 #endif
           // rectangles @ http://www.network-science.de/ascii/
 
-#ifdef ISKRAJS_LOGO
+#if defined(ISKRAJS_LOGO)
           "\n"
-          "    ____       __                    _______  \n"
-          "   /  _/_____ / /__ _____ ____ _    / / ___/  \n"
-          "   / / / ___// //_// ___// __ `/_  / /\\__ \\ \n"
-          " _/ / (__  )/ ,<  / /   / /_/ / /_/ /___/ /   \n"
-          "/___//____//_/|_|/_/    \\__,_/\\____//____/  \n"
+          "    ____       __                     __ _____\n"
+          "   /  _/_____ / /__ _____ ____ _     / // ___/\n"
+          "   / / / ___// //_// ___// __ `/__  / /(__ \\  \n"
+          " _/ / (__  )/ ,<  / /   / /_/ // /_/ /___/ /  \n"
+          "/___//____//_/|_|/_/    \\__,_/ \\____//____/   \n"
+          "\n"
+          "Based on Espruino " JS_VERSION "\n"
+          "(c) 2022 G.Williams, Amperka Robots LLC\n"
+          "Support the work of core developers:\n"
+          "http://espruino.com/Donate\n"
+#elif defined(ISKRAJS_MINI_LOGO)
+          "\n"
+          "    ____       __                     __ _____\n"
+          "   /  _/_____ / /__ _____ ____ _     / // ___/\n"
+          "   / / / ___// //_// ___// __ `/__  / /(__ \\  \n"
+          " _/ / (__  )/ ,<  / /   / /_/ // /_/ /___/ /  \n"
+          "/___//____//_/|_|/_/    \\__,_/ \\____//____/   \n"
+          "               _         _ \n"
+          "   ____ ___   (_) ___   (_)\n"
+          "  / __ `__ \\ / // __ \\ / / \n"
+          " / / / / / // // / / // /  \n"
+          "/_/ /_/ /_//_//_/ /_//_/   \n"
           "\n"
           "Based on Espruino " JS_VERSION "\n"
           "(c) 2022 G.Williams, Amperka Robots LLC\n"
