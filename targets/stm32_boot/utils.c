@@ -148,8 +148,17 @@ bool jumpToEspruinoBinary() {
   if (ResetHandler==0 || ResetHandler==0xFFFFFFFF)
     return false;
   void (*startPtr)() = *ResetHandler;
+  __set_MSP(*(__IO uint32_t*)(0x08000000 + ESPRUINO_BINARY_ADDRESS));
   startPtr();
   return true; // should never get here
+}
+
+bool deInitUsbAndJumpToEspruinoBinary() {
+  volatile uint32_t x;
+  MX_USB_DEVICE_DeInit();
+  for (x = 0; x < 168 * 1000 * 10; ++x)
+    ;
+  return jumpToEspruinoBinary();
 }
 
 void initHardware() {

@@ -323,6 +323,8 @@ static uint8_t functionToAF(JshPinFunction func) {
   case JSH_TIMER10 : return GPIO_AF_TIM10;
   case JSH_TIMER11 : return GPIO_AF_TIM11;
   case JSH_TIMER12 : return GPIO_AF_TIM12;
+  case JSH_TIMER13 : return GPIO_AF_TIM13;
+  case JSH_TIMER14 : return GPIO_AF_TIM14;
   case JSH_USART1  : return GPIO_AF_USART1;
   case JSH_USART2  : return GPIO_AF_USART2;
   case JSH_USART3  : return GPIO_AF_USART3;

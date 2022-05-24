@@ -844,6 +844,37 @@ void jsiSemiInit(bool autoLoad, JsfFileName *loadedFilename) {
           // set up terminal to avoid word wrap
           "\e[?7l"
 #endif
+
+#if defined(ISKRAJS_LOGO)
+          "\n"
+          "    ____       __                     __ _____\n"
+          "   /  _/_____ / /__ _____ ____ _     / // ___/\n"
+          "   / / / ___// //_// ___// __ `/__  / /(__ \\  \n"
+          " _/ / (__  )/ ,<  / /   / /_/ // /_/ /___/ /  \n"
+          "/___//____//_/|_|/_/    \\__,_/ \\____//____/   \n"
+          "\n"
+          "Based on Espruino " JS_VERSION "\n"
+          "(c) 2022 G.Williams, Amperka Robots LLC\n"
+          "Support the work of core developers:\n"
+          "http://espruino.com/Donate\n"
+#elif defined(ISKRAJS_MINI_LOGO)
+          "\n"
+          "    ____       __                     __ _____\n"
+          "   /  _/_____ / /__ _____ ____ _     / // ___/\n"
+          "   / / / ___// //_// ___// __ `/__  / /(__ \\  \n"
+          " _/ / (__  )/ ,<  / /   / /_/ // /_/ /___/ /  \n"
+          "/___//____//_/|_|/_/    \\__,_/ \\____//____/   \n"
+          "               _         _ \n"
+          "   ____ ___   (_) ___   (_)\n"
+          "  / __ `__ \\ / // __ \\ / / \n"
+          " / / / / / // // / / // /  \n"
+          "/_/ /_/ /_//_//_/ /_//_/   \n"
+          "\n"
+          "Based on Espruino " JS_VERSION "\n"
+          "(c) 2022 G.Williams, Amperka Robots LLC\n"
+          "Support the work of core developers:\n"
+          "http://espruino.com/Donate\n"
+#else
           // rectangles @ http://www.network-science.de/ascii/
           "\n"
           " ____                 _ \n"
@@ -859,6 +890,7 @@ void jsiSemiInit(bool autoLoad, JsfFileName *loadedFilename) {
           "Espruino is Open Source. Our work is supported\n"
           "only by sales of official boards and donations:\n"
           "http://espruino.com/Donate\n"
+#endif
 #endif
         );
 #ifdef ESP8266

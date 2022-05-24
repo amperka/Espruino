@@ -53,8 +53,24 @@ int main(void) {
   BootloaderState state = BLS_UNDEFINED;
   char currentCommand = 0;
 
+  unsigned int buttonLifted = 0;
+  unsigned int buttonPressed = 0;
 
   while (1) {
+    // if we pressed the button to enter the bootloader, then released,
+    // then pressed again (with debounce) then let's jump back to Espruino
+    if (isButtonPressed()) {
+      if (buttonPressed<0xFFFFFFFF) 
+        buttonPressed++;
+      if (buttonLifted>10000 && buttonPressed>10000) {
+        setLEDs(0);
+        deInitUsbAndJumpToEspruinoBinary();
+      }
+    } else {
+      if (buttonLifted<0xFFFFFFFF) 
+        buttonLifted++;
+    }
+    
     if (!jshIsUSBSERIALConnected()) {
       setLEDs(0b0101);
       // reset, led off

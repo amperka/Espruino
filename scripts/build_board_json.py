@@ -57,10 +57,13 @@ pins = pinutils.append_devices_to_pin_list(pins, board)
 # Documentation/functions
 jsondatas = common.get_jsondata(False) # use command-line args
 # -----------------------------------------------------------------------------------------
-board.info["image_url"] = "http://www.espruino.com/img/"+boardname+".jpg"
-board.info["thumb_url"] = "http://www.espruino.com/img/"+boardname+"_thumb.jpg"
+images_url_base = board.info.get("images_url_base", "http://www.espruino.com/img/")
+board.info["image_url"] = ''.join([images_url_base, boardname, ".jpg"])
+board.info["thumb_url"] = ''.join([images_url_base, boardname, "_thumb.jpg"])
+
+binaries_url_base = board.info.get("binaries_url_base", "http://www.espruino.com/binaries/")
 board.info["binary_version"] = common.get_version();
-board.info["binary_url"] = "http://www.espruino.com/binaries/"+common.get_board_binary_name(board)
+board.info["binary_url"] = ''.join([binaries_url_base, common.get_board_binary_name(board)])
 # -----------------------------------------------------------------------------------------
 # Built-in modules
 

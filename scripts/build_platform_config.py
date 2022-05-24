@@ -177,6 +177,9 @@ codeOut("#define PC_BOARD_ID \""+boardname+"\"")
 codeOut("#define PC_BOARD_CHIP \""+board.chip["part"]+"\"")
 codeOut("#define PC_BOARD_CHIP_FAMILY \""+board.chip["family"]+"\"")
 
+if "json_url" in board.info:
+    codeOut('#define PC_JSON_URL "{0}"'.format(board.info['json_url']))
+    
 codeOut("")
 
 # Linker vars used for:
@@ -516,6 +519,11 @@ for device in pinutils.OTHER_DEVICES:
   if device in board.devices:
     for entry in board.devices[device]:
       if entry[:3]=="pin": usedPinChecks.append("(PIN)==" + toPinDef(board.devices[device][entry])+"/* "+device+" */")
+
+# Dump pin definitions
+for p in pins:
+    rawName = p['name'].lstrip('P')
+    codeOut('#define {0}_PININDEX {1}'.format(rawName, toPinDef(rawName)))
 
 # Specific hacks for nucleo boards
 if "NUCLEO_A" in board.devices:
